@@ -1,0 +1,1783 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full bg-[#faf6ee] text-[#2d1e13]">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#2d1e13">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Bibliotheca - Gestión de Biblioteca & Asistente</title>
+
+  <!-- PWA Manifest dinámico -->
+  <link rel="manifest" id="pwa-manifest">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- html5-qrcode para escaneo de códigos de barra -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+  <style>
+    .serif {
+      font-family: Georgia, Cambria, "Times New Roman", Times, serif;
+    }
+    .book-shadow {
+      box-shadow: 2px 5px 14px rgba(45, 30, 19, 0.22);
+    }
+    .book-spine {
+      box-shadow: inset 4px 0 6px -2px rgba(0, 0, 0, 0.4), inset -1px 0 2px rgba(255, 255, 255, 0.2);
+    }
+    /* Botones monocromáticos de alto contraste: Marrón oscuro noble */
+    .btn-solid {
+      background-color: #2d1e13;
+      color: #faf6ee;
+      border: 1px solid #2d1e13;
+      transition: background-color 0.15s ease, border-color 0.15s ease;
+    }
+    .btn-solid:hover {
+      background-color: #453020;
+      border-color: #453020;
+    }
+    .btn-outline {
+      background-color: transparent;
+      color: #2d1e13;
+      border: 1px solid #2d1e13;
+      transition: all 0.15s ease;
+    }
+    .btn-outline:hover {
+      background-color: #2d1e13;
+      color: #faf6ee;
+    }
+    .btn-outline-active {
+      background-color: #2d1e13;
+      color: #faf6ee;
+      border: 1px solid #2d1e13;
+    }
+
+    /* Animación Láser de Escáner */
+    @keyframes laser {
+      0%, 100% { top: 12%; opacity: 0.8; }
+      50% { top: 85%; opacity: 1; }
+    }
+    .laser-line {
+      position: absolute;
+      left: 10%;
+      right: 10%;
+      height: 2px;
+      background: #2d1e13;
+      box-shadow: 0 0 8px rgba(45, 30, 19, 0.6);
+      animation: laser 2.2s infinite ease-in-out;
+      z-index: 10;
+    }
+    .scan-flash {
+      animation: flashPulse 0.35s ease-out;
+    }
+    @keyframes flashPulse {
+      0% { background-color: rgba(45, 30, 19, 0.45); }
+      100% { background-color: transparent; }
+    }
+    .hide-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .hide-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    #reader video {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover !important;
+      border-radius: 0.75rem;
+    }
+    #reader {
+      border: none !important;
+    }
+  </style>
+</head>
+<body class="h-full flex flex-col font-sans select-none antialiased bg-[#faf6ee] text-[#2d1e13] overflow-hidden">
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-11/12 max-w-sm pointer-events-none"></div>
+
+  <!-- Header Superior Fijo: Estilo Editorial Monocromático (Cero Emoticones) -->
+  <header class="bg-[#faf6ee] border-b border-[#2d1e13]/20 px-4 py-2.5 shrink-0 flex items-center justify-between z-20">
+    <div class="flex items-center gap-2">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 text-[#2d1e13]"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+      <div>
+        <h1 class="text-xs font-bold tracking-wide serif text-[#2d1e13]">
+          Bibliotheca
+        </h1>
+        <p class="text-[9px] text-[#7d654a] italic" id="header-subtitle">Catálogo General</p>
+      </div>
+    </div>
+    
+    <div class="flex items-center gap-1.5">
+      <button onclick="openSmartAddModal()" class="btn-solid px-2.5 py-1 rounded text-[10px] serif font-semibold flex items-center gap-1">
+        <span>+ Añadir Libro</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Contenedor Principal con Scroll -->
+  <main class="flex-1 overflow-y-auto pb-24 relative bg-[#faf6ee]">
+
+    <!-- ========================================== -->
+    <!-- TAB 1: ESTANTERÍA (CATÁLOGO & FILTROS)     -->
+    <!-- ========================================== -->
+    <section id="tab-shelf-view" class="p-3.5 space-y-3">
+      
+      <!-- Fichero de Contadores Monocromático (Actúan como filtros directos) -->
+      <div class="grid grid-cols-4 gap-1.5 text-center">
+        <div onclick="selectStatusFilter('all')" id="stat-all" class="cursor-pointer btn-outline-active p-1.5 rounded text-[10px] transition">
+          <span class="text-[8px] uppercase tracking-wider block">Total</span>
+          <span class="font-bold text-xs serif" id="count-total">0</span>
+        </div>
+        <div onclick="selectStatusFilter('Leído')" id="stat-read" class="cursor-pointer btn-outline p-1.5 rounded text-[10px] transition">
+          <span class="text-[8px] uppercase tracking-wider block">Leídos</span>
+          <span class="font-bold text-xs serif" id="count-read">0</span>
+        </div>
+        <div onclick="selectStatusFilter('Pendiente')" id="stat-pending" class="cursor-pointer btn-outline p-1.5 rounded text-[10px] transition">
+          <span class="text-[8px] uppercase tracking-wider block">Sin leer</span>
+          <span class="font-bold text-xs serif" id="count-pending">0</span>
+        </div>
+        <div onclick="selectStatusFilter('Wishlist')" id="stat-wishlist" class="cursor-pointer btn-outline p-1.5 rounded text-[10px] transition">
+          <span class="text-[8px] uppercase tracking-wider block">Wishlist</span>
+          <span class="font-bold text-xs serif" id="count-wishlist">0</span>
+        </div>
+      </div>
+
+      <!-- Buscador & Selector de Vista (Grilla vs Lista) -->
+      <div class="flex gap-1.5 items-center">
+        <div class="relative flex-1">
+          <input type="text" id="shelf-search" oninput="handleSearch(this.value)" placeholder="Buscar por título, autor o género..."
+                 class="w-full bg-white border border-[#2d1e13]/30 rounded py-1 px-2.5 text-[11px] text-[#2d1e13] placeholder-[#7d654a]/70 focus:outline-none focus:border-[#2d1e13] serif">
+        </div>
+        <div class="flex border border-[#2d1e13] rounded overflow-hidden">
+          <button onclick="setViewMode('grid')" id="btn-view-grid" class="px-2 py-1 bg-[#2d1e13] text-[#faf6ee] text-[9px] serif flex items-center gap-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3 h-3"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            <span>Portadas</span>
+          </button>
+          <button onclick="setViewMode('list')" id="btn-view-list" class="px-2 py-1 bg-transparent text-[#2d1e13] text-[9px] serif flex items-center gap-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3 h-3"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+            <span>Lista</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Filtro por Extensión de Páginas (Sugerencia 1) -->
+      <div class="flex items-center gap-1 text-[9px]">
+        <span class="text-[#7d654a] serif">Extensión:</span>
+        <button onclick="togglePageFilter('all', this)" class="page-filter-btn btn-solid px-1.5 py-0.5 rounded serif">Todas</button>
+        <button onclick="togglePageFilter('short', this)" class="page-filter-btn btn-outline px-1.5 py-0.5 rounded serif">Corta (&lt;200p)</button>
+        <button onclick="togglePageFilter('medium', this)" class="page-filter-btn btn-outline px-1.5 py-0.5 rounded serif">Media (200-400p)</button>
+        <button onclick="togglePageFilter('long', this)" class="page-filter-btn btn-outline px-1.5 py-0.5 rounded serif">Larga (&gt;400p)</button>
+      </div>
+
+      <!-- Filtros por Género Multiselección -->
+      <div id="genres-container" class="flex gap-1 overflow-x-auto pb-0.5 text-[9px] hide-scrollbar">
+        <!-- Generado dinámicamente según los géneros de los libros -->
+      </div>
+
+      <!-- VISTA EN GRILLA (PORTADAS) -->
+      <div id="books-grid" class="grid grid-cols-2 gap-3 pt-1"></div>
+
+      <!-- VISTA EN LISTA EDITORIAL -->
+      <div id="books-list" class="hidden space-y-1.5 pt-1"></div>
+
+      <!-- Estado Vacío -->
+      <div id="shelf-empty" class="hidden flex flex-col items-center justify-center text-center py-14 px-4 space-y-3">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-12 h-12 text-[#7d654a]/60"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+        <div class="space-y-1">
+          <p class="text-sm font-semibold text-[#2d1e13] serif">Su estantería está vacía</p>
+          <p class="text-xs text-[#7d654a] max-w-xs">Añada libros escribiendo su título, escaneando códigos de barra o cargando la colección de muestra.</p>
+        </div>
+        <div class="flex gap-2 pt-2">
+          <button onclick="openSmartAddModal()" class="btn-solid px-3.5 py-1.5 rounded text-xs serif">
+            + Añadir Primer Libro
+          </button>
+          <button onclick="loadDemoBooks()" class="btn-outline px-3.5 py-1.5 rounded text-xs serif">
+            Cargar Muestra
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- TAB 2: ASISTENTE (CHAT SEMÁNTICO LITERARIO)-->
+    <!-- ========================================== -->
+    <section id="tab-assistant-view" class="hidden h-full flex flex-col p-3.5 space-y-3">
+      <div class="bg-[#f3ebd9] border border-[#2d1e13]/20 px-3 py-1.5 rounded flex items-center justify-between shrink-0">
+        <span class="text-[9px] text-[#2d1e13] serif italic">Asistente bibliotecario de su catálogo</span>
+        <span class="text-[8px] border border-[#2d1e13]/40 px-1.5 py-0.5 rounded serif" id="assistant-book-count">0 obras</span>
+      </div>
+
+      <!-- Chat Mensajes -->
+      <div id="chat-messages" class="flex-1 overflow-y-auto space-y-3 pr-1 py-1 text-xs">
+        <div class="flex gap-2.5 items-start">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 text-[#2d1e13] shrink-0 mt-0.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-3 text-[#2d1e13] max-w-[85%] leading-relaxed serif space-y-1">
+            <p>Bienvenido. Soy su <strong>Asistente Bibliotecario</strong>.</p>
+            <p class="text-[11px] text-[#7d654a]">Poseo conocimiento profundo de las sinopsis, materias y calificaciones de los volúmenes en sus estantes. Puede consultarme temáticas específicas (ej: fútbol, relatos breves, misterios) o pedirme orientación para su próxima lectura.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Píldoras temáticas -->
+      <div class="flex gap-1.5 overflow-x-auto hide-scrollbar shrink-0 py-1 text-[9px]">
+        <button onclick="sendQuickPrompt('¿Qué libro de mi colección me recomienda para comenzar hoy y por qué?')" class="btn-outline px-2.5 py-1 rounded whitespace-nowrap serif">
+          ¿Qué lectura me sugiere hoy?
+        </button>
+        <button onclick="sendQuickPrompt('Analice las temáticas y argumentos principales de los libros que atesoro.')" class="btn-outline px-2.5 py-1 rounded whitespace-nowrap serif">
+          Resumen de mi colección
+        </button>
+        <button onclick="sendQuickPrompt('¿Tengo libros que toquen el fútbol, el deporte o la amistad barrial?')" class="btn-outline px-2.5 py-1 rounded whitespace-nowrap serif">
+          Obras sobre fútbol o potrero
+        </button>
+      </div>
+
+      <!-- Input de Chat -->
+      <div class="shrink-0 flex gap-2 items-center">
+        <input type="text" id="chat-input" onkeydown="if(event.key === 'Enter') sendMessage()" placeholder="Escriba un tema o consulta literaria..."
+               class="flex-1 bg-white border border-[#2d1e13]/30 rounded py-1 px-2.5 text-xs text-[#2d1e13] placeholder-[#7d654a]/70 focus:outline-none focus:border-[#2d1e13] serif">
+        <button onclick="sendMessage()" id="chat-send-btn" class="btn-solid px-3 py-1 rounded text-xs serif">
+          Enviar
+        </button>
+      </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- TAB 3: ARCHIVO (METAS, ESTADÍSTICAS & EXPORT)-->
+    <!-- ========================================== -->
+    <section id="tab-settings-view" class="hidden p-3.5 space-y-3.5 text-[#2d1e13]">
+      
+      <!-- SECCIÓN 1: CONFIGURAR METAS DE LECTURA -->
+      <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-3 space-y-2.5">
+        <div class="flex justify-between items-center border-b border-[#2d1e13]/15 pb-1">
+          <span class="font-bold text-xs serif">Meta de Lectura 2026</span>
+          <span class="text-[9px] text-[#7d654a] serif" id="goal-summary-text">0 de 12 libros</span>
+        </div>
+        <div class="flex items-center gap-2 text-[10px]">
+          <label class="serif text-[#7d654a]">Objetivo del año:</label>
+          <input type="number" id="annual-goal-input" value="12" min="1" max="500"
+                 class="w-14 bg-white border border-[#2d1e13]/30 rounded px-1.5 py-0.5 text-center font-bold text-[#2d1e13]">
+          <span class="serif">libros</span>
+          <button onclick="saveAnnualGoal()" class="btn-solid px-2 py-0.5 rounded text-[9px] serif ml-auto">Guardar Meta</button>
+        </div>
+        <!-- Barra de progreso -->
+        <div class="w-full bg-[#2d1e13]/15 rounded-full h-1.5 overflow-hidden">
+          <div id="goal-progress-bar" class="bg-[#2d1e13] h-full w-[0%] transition-all duration-300"></div>
+        </div>
+      </div>
+
+      <!-- SECCIÓN 2: ESTADÍSTICAS AMPLIADAS -->
+      <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-3 space-y-2">
+        <h3 class="font-bold text-xs serif border-b border-[#2d1e13]/15 pb-1">Estadísticas de la Biblioteca</h3>
+        
+        <div class="grid grid-cols-2 gap-1.5 text-[10px]">
+          <div class="bg-white/70 border border-[#2d1e13]/15 p-2 rounded">
+            <span class="text-[8px] text-[#7d654a] block uppercase">Leídos este Año</span>
+            <span class="font-bold text-xs serif" id="stat-year-count">0 libros</span>
+          </div>
+          <div class="bg-white/70 border border-[#2d1e13]/15 p-2 rounded">
+            <span class="text-[8px] text-[#7d654a] block uppercase">Leídos este Mes</span>
+            <span class="font-bold text-xs serif" id="stat-month-count">0 libros</span>
+          </div>
+          <div class="bg-white/70 border border-[#2d1e13]/15 p-2 rounded">
+            <span class="text-[8px] text-[#7d654a] block uppercase">Páginas Totales</span>
+            <span class="font-bold text-xs serif" id="stat-pages-count">0 págs</span>
+          </div>
+          <div class="bg-white/70 border border-[#2d1e13]/15 p-2 rounded">
+            <span class="text-[8px] text-[#7d654a] block uppercase">Tiempo Total Est.</span>
+            <span class="font-bold text-xs serif" id="stat-hours-count">~0 hs</span>
+          </div>
+          <div class="bg-white/70 border border-[#2d1e13]/15 p-2 rounded">
+            <span class="text-[8px] text-[#7d654a] block uppercase">Género Dominante</span>
+            <span class="font-bold text-xs serif truncate block" id="stat-top-genre">N/A</span>
+          </div>
+          <div class="bg-white/70 border border-[#2d1e13]/15 p-2 rounded">
+            <span class="text-[8px] text-[#7d654a] block uppercase">Autor Predilecto</span>
+            <span class="font-bold text-xs serif truncate block" id="stat-top-author">N/A</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECCIÓN 3: EXPORTACIÓN Y RESPALDO (RESTAURADA COMPLETA) -->
+      <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-3 space-y-2">
+        <h3 class="font-bold text-xs serif border-b border-[#2d1e13]/15 pb-1">Exportación y Respaldo</h3>
+        <p class="text-[9px] text-[#7d654a] serif">Descargue su colección para Excel o resguardo:</p>
+        <div class="grid grid-cols-2 gap-1.5">
+          <button onclick="exportJSON()" class="btn-outline py-1.5 rounded text-[10px] serif font-semibold">
+            Exportar JSON
+          </button>
+          <button onclick="exportCSV()" class="btn-outline py-1.5 rounded text-[10px] serif font-semibold">
+            Exportar CSV (Excel)
+          </button>
+          <label class="btn-outline py-1.5 rounded text-[10px] serif font-semibold text-center cursor-pointer">
+            Importar JSON
+            <input type="file" id="import-json-file" accept=".json" onchange="importJSON(event)" class="hidden">
+          </label>
+          <button onclick="loadDemoBooks()" class="btn-solid py-1.5 rounded text-[10px] serif">
+            Cargar Muestra
+          </button>
+        </div>
+        <div class="pt-1">
+          <button onclick="confirmClearDatabase()" class="w-full py-1 text-[9px] text-[#7d2929] border border-[#7d2929]/30 rounded hover:bg-[#7d2929]/10 serif">
+            Vaciar toda la biblioteca
+          </button>
+        </div>
+      </div>
+
+      <!-- SECCIÓN 4: CLAVE DEL ASISTENTE (GEMINI) -->
+      <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-3 space-y-2">
+        <div class="flex justify-between items-center">
+          <h3 class="font-bold text-xs serif">Clave del Asistente (Google Gemini)</h3>
+          <span class="text-[8px] border border-[#2d1e13]/30 px-1 rounded font-bold" id="api-status-badge">Sin clave</span>
+        </div>
+        <p class="text-[9px] text-[#7d654a] serif leading-tight">
+          Obtenga su clave gratuita en <a href="https://aistudio.google.com/app/apikey" target="_blank" class="underline font-bold text-[#2d1e13]">aistudio.google.com</a>. Queda guardada únicamente en su navegador.
+        </p>
+        <div class="flex gap-1">
+          <input type="password" id="gemini-api-key-input" placeholder="Pegue aquí su clave (AIzaSy...)"
+                 class="flex-1 bg-white border border-[#2d1e13]/30 rounded px-2 py-1 text-[10px] font-mono text-[#2d1e13]">
+          <button onclick="saveApiKey()" class="btn-solid px-3 py-1 rounded text-[10px] serif">Guardar</button>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ========================================== -->
+  <!-- BARRA INFERIOR (ESTILO MONOCROMÁTICO LIMPIO) -->
+  <!-- ========================================== -->
+  <nav class="fixed bottom-0 left-0 right-0 bg-[#faf6ee] border-t border-[#2d1e13]/20 grid grid-cols-3 py-2 px-1 text-center z-30 pb-[max(0.6rem,env(safe-area-inset-bottom))]">
+    <button onclick="switchTab('shelf')" id="nav-btn-shelf" class="flex flex-col items-center gap-1 font-bold text-[#2d1e13] transition">
+      <!-- Icono Libro -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+      <span class="text-[9px] serif">Estantería</span>
+    </button>
+    <button onclick="switchTab('assistant')" id="nav-btn-assistant" class="flex flex-col items-center gap-1 text-[#7d654a] hover:text-[#2d1e13] transition">
+      <!-- Icono Globito de Diálogo -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+      <span class="text-[9px] serif">Asistente</span>
+    </button>
+    <button onclick="switchTab('settings')" id="nav-btn-settings" class="flex flex-col items-center gap-1 text-[#7d654a] hover:text-[#2d1e13] transition">
+      <!-- Icono Ruedita de Configuración -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      <span class="text-[9px] serif">Archivo</span>
+    </button>
+  </nav>
+
+  <!-- ========================================== -->
+  <!-- MODAL: FICHA DEL LIBRO (CON ESTRELLAS EDITABLES) -->
+  <!-- ========================================== -->
+  <div id="book-modal" class="hidden fixed inset-0 bg-[#1a0f08]/75 backdrop-blur-xs flex items-center justify-center p-3 z-50">
+    <div class="bg-[#faf6ee] border border-[#2d1e13] rounded-2xl w-full max-w-md max-h-[92vh] overflow-y-auto flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+      
+      <!-- Encabezado con Portada -->
+      <div class="p-4 border-b border-[#2d1e13]/15 flex gap-3.5 items-start relative bg-[#f3ebd9]">
+        <img id="modal-cover" src="" alt="Portada" class="w-16 h-24 object-cover rounded shadow border border-[#2d1e13]/25 shrink-0 bg-[#2d1e13] book-spine">
+        <div class="flex-1 min-w-0 pr-6 space-y-1">
+          <span id="modal-genre-badge" class="inline-block text-[9px] border border-[#2d1e13]/30 px-2 py-0.5 rounded serif truncate max-w-full">Género</span>
+          <h2 id="modal-title" class="font-bold text-xs text-[#2d1e13] leading-tight line-clamp-2 serif">Título</h2>
+          <p id="modal-author" class="text-[11px] text-[#7d654a] serif italic truncate">Autor</p>
+          <p id="modal-pages-estimate" class="text-[10px] text-[#7d654a]">0 páginas • ~0 hs</p>
+          
+          <!-- CALIFICACIÓN INTERACTIVA DE 5 ESTRELLAS EDITABLE -->
+          <div class="pt-1 flex items-center gap-1.5">
+            <span class="text-[10px] text-[#7d654a] serif">Calificación:</span>
+            <div id="modal-stars-container" class="flex items-center gap-1 text-base cursor-pointer select-none">
+              <span onclick="setBookRating(1)" class="star-item px-1 py-0.5 hover:scale-125 transition">☆</span>
+              <span onclick="setBookRating(2)" class="star-item px-1 py-0.5 hover:scale-125 transition">☆</span>
+              <span onclick="setBookRating(3)" class="star-item px-1 py-0.5 hover:scale-125 transition">☆</span>
+              <span onclick="setBookRating(4)" class="star-item px-1 py-0.5 hover:scale-125 transition">☆</span>
+              <span onclick="setBookRating(5)" class="star-item px-1 py-0.5 hover:scale-125 transition">☆</span>
+            </div>
+            <button onclick="setBookRating(0)" class="text-[9px] text-[#7d654a] hover:text-[#2d1e13] underline ml-1" title="Quitar calificación">quitar</button>
+          </div>
+        </div>
+        <button onclick="closeBookModal()" class="absolute top-3.5 right-3.5 text-[#2d1e13] font-bold">
+          ✕
+        </button>
+      </div>
+
+      <!-- Contenido de la Ficha -->
+      <div class="p-4 space-y-3.5 text-xs">
+        
+        <!-- GESTOR DIRECTO DE ESTADOS (Wishlist -> Sin leer -> Leyendo -> Leído) -->
+        <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 p-2.5 rounded space-y-2">
+          <div class="flex justify-between items-center text-[10px] text-[#2d1e13] serif">
+            <span>Estado del ejemplar:</span>
+            <span id="modal-current-status-badge" class="font-bold border border-[#2d1e13] px-1.5 py-0.5 rounded">Leído</span>
+          </div>
+
+          <!-- Botones directos de 1 clic -->
+          <div class="grid grid-cols-4 gap-1 text-[9px] serif pt-0.5">
+            <button onclick="changeBookStatus('Wishlist')" id="mbtn-status-wishlist" class="btn-outline py-1 rounded">Wishlist</button>
+            <button onclick="changeBookStatus('Pendiente')" id="mbtn-status-pending" class="btn-outline py-1 rounded">Sin leer</button>
+            <button onclick="changeBookStatus('Leyendo')" id="mbtn-status-reading" class="btn-outline py-1 rounded">Leyendo</button>
+            <button onclick="changeBookStatus('Leído')" id="mbtn-status-read" class="btn-solid py-1 rounded">Leído</button>
+          </div>
+
+          <!-- Botón de acción rápida contextual -->
+          <button onclick="applyQuickStatusAction()" id="modal-quick-action-btn" class="w-full py-1.5 border border-[#2d1e13] bg-white text-[10px] rounded serif font-semibold hover:bg-[#faf6ee] transition">
+            Cambiar estado
+          </button>
+        </div>
+
+        <!-- Sinopsis -->
+        <div class="space-y-1">
+          <span class="font-bold text-[#2d1e13] serif text-[11px]">Argumento / Sinopsis</span>
+          <div id="modal-synopsis" class="bg-white border border-[#2d1e13]/20 rounded p-2.5 text-[#2d1e13] text-xs leading-relaxed max-h-28 overflow-y-auto serif">
+            Sin sinopsis disponible.
+          </div>
+        </div>
+
+        <!-- Opciones Secundarias (Portada y Préstamos) -->
+        <details class="text-[10px] text-[#7d654a] border-t border-[#2d1e13]/15 pt-2">
+          <summary class="cursor-pointer serif font-semibold text-[#2d1e13]">
+            Opciones adicionales (Cambiar portada / Registrar préstamo)
+          </summary>
+          <div class="pt-2 space-y-2">
+            <div>
+              <label class="text-[9px] text-[#7d654a]">URL de Portada o Subir Archivo:</label>
+              <div class="flex gap-1 pt-0.5">
+                <input type="text" id="modal-cover-input" placeholder="Pegar enlace de imagen..."
+                       class="flex-1 bg-white border border-[#2d1e13]/30 rounded px-2 py-1 text-xs">
+                <label class="btn-outline px-2 py-1 rounded text-[9px] serif cursor-pointer">
+                  Subir
+                  <input type="file" id="modal-cover-file" accept="image/*" onchange="handleCoverFileUpload(event)" class="hidden">
+                </label>
+              </div>
+            </div>
+
+            <div class="bg-[#f3ebd9] p-2 rounded border border-[#2d1e13]/20 space-y-1.5">
+              <span class="font-bold text-[9px] serif block text-[#2d1e13]">Registro de Préstamo (Opcional):</span>
+              <div class="grid grid-cols-2 gap-1.5">
+                <input type="text" id="modal-loan-name" placeholder="Prestado a (Nombre)" class="bg-white border rounded px-1.5 py-1 text-xs">
+                <input type="tel" id="modal-loan-phone" placeholder="Teléfono" class="bg-white border rounded px-1.5 py-1 text-xs">
+              </div>
+              <button onclick="sendWhatsAppReminder()" class="w-full py-1 btn-outline text-[9px] serif rounded">
+                Enviar recordatorio de WhatsApp
+              </button>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <!-- Pie del Modal -->
+      <div class="p-3 border-t border-[#2d1e13]/15 flex justify-between items-center bg-[#f3ebd9]">
+        <button onclick="deleteCurrentBook()" class="px-2.5 py-1 text-[10px] text-[#7d2929] border border-[#7d2929]/30 rounded hover:bg-[#7d2929]/10 serif">
+          Eliminar
+        </button>
+        <div class="flex gap-1.5">
+          <button onclick="closeBookModal()" class="btn-outline px-3 py-1 rounded text-xs serif">
+            Cerrar
+          </button>
+          <button onclick="saveBookModalChanges()" class="btn-solid px-3.5 py-1 rounded text-xs serif font-bold">
+            Guardar Ficha
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL: AÑADIR LIBRO (TÍTULO/AUTOR O CÁMARA)-->
+  <!-- ========================================== -->
+  <div id="smart-add-modal" class="hidden fixed inset-0 bg-[#1a0f08]/75 backdrop-blur-xs flex items-center justify-center p-3 z-50">
+    <div class="bg-[#faf6ee] border border-[#2d1e13] rounded-2xl w-full max-w-sm max-h-[92vh] overflow-y-auto p-3.5 space-y-3 shadow-2xl">
+      <div class="flex justify-between items-center border-b border-[#2d1e13]/20 pb-2">
+        <h3 class="font-bold text-xs serif text-[#2d1e13]">Añadir a la Biblioteca</h3>
+        <button onclick="closeSmartAddModal()" class="text-[#2d1e13] font-bold">✕</button>
+      </div>
+
+      <!-- Selector de Modo: Escribir vs Cámara -->
+      <div class="grid grid-cols-2 gap-1 text-[10px] serif">
+        <button onclick="switchAddTab('search')" id="tab-add-search-btn" class="btn-solid py-1 rounded font-bold">
+          Buscar por Título
+        </button>
+        <button onclick="switchAddTab('scan')" id="tab-add-scan-btn" class="btn-outline py-1 rounded">
+          Escanear Código
+        </button>
+      </div>
+
+      <!-- MODO A: BÚSQUEDA PREDICTIVA POR TÍTULO/AUTOR -->
+      <div id="add-mode-search" class="space-y-2">
+        <p class="text-[9px] text-[#7d654a] serif leading-tight">
+          Escriba el nombre o autor (ej: <em>El psicoanalista</em>). Seleccione de las sugerencias para completar automáticamente portada, páginas y sinopsis.
+        </p>
+        <div class="flex gap-1">
+          <input type="text" id="smart-search-input" onkeydown="if(event.key === 'Enter') executeSmartSearch()" placeholder="Título o autor..."
+                 class="flex-1 bg-white border border-[#2d1e13]/30 rounded px-2 py-1 text-xs serif">
+          <button onclick="executeSmartSearch()" class="btn-solid px-3 py-1 rounded text-xs serif">
+            Buscar
+          </button>
+        </div>
+
+        <!-- Indicador de carga -->
+        <div id="smart-search-loading" class="hidden text-center py-4 text-xs serif text-[#7d654a] italic">
+          Buscando en catálogo bibliográfico mundial...
+        </div>
+
+        <!-- Resultados encontrados -->
+        <div id="smart-search-results" class="space-y-1.5 max-h-56 overflow-y-auto pr-0.5"></div>
+      </div>
+
+      <!-- MODO B: ESCÁNER FÍSICO CON CÁMARA (MODO MASIVO) -->
+      <div id="add-mode-scan" class="hidden space-y-2">
+        <div class="relative bg-[#1c110a] border border-[#2d1e13] rounded-xl overflow-hidden aspect-[4/3] flex flex-col items-center justify-center">
+          <div id="reader" class="w-full h-full"></div>
+          <div id="scanner-overlay" class="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
+            <div class="laser-line" id="laser-line"></div>
+            <div class="w-48 h-28 border border-dashed border-[#faf6ee]/70 rounded-xl flex items-center justify-center">
+              <span class="text-[8px] text-[#faf6ee] serif tracking-widest bg-[#2d1e13]/80 px-2 py-0.5 rounded">
+                ALINEAR CÓDIGO ISBN
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Controles de Cámara -->
+        <div class="flex justify-between items-center text-[10px]">
+          <button id="camera-ctrl-btn" onclick="toggleCamera()" class="btn-outline px-2.5 py-1 rounded text-[10px] serif">
+            Iniciar Cámara
+          </button>
+          <span class="text-[9px] text-[#7d654a]" id="camera-status-label">Cámara en espera</span>
+        </div>
+
+        <!-- Cola de Códigos Escaneados -->
+        <div class="bg-[#f3ebd9] border border-[#2d1e13]/20 rounded p-2 space-y-1.5">
+          <div class="flex justify-between items-center text-[9px] serif">
+            <span class="font-bold">Cola de escaneo continuo:</span>
+            <span id="scan-queue-count">0 códigos</span>
+          </div>
+          <div id="scan-queue-list" class="space-y-1 max-h-24 overflow-y-auto text-[9px]"></div>
+          <button id="batch-save-btn" disabled onclick="processBatchQueue()" class="w-full py-1 btn-solid text-[9px] serif rounded disabled:opacity-40">
+            Procesar y Guardar Lote
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- JAVASCRIPT: LÓGICA CORE DE BIBLIOTHECA     -->
+  <!-- ========================================== -->
+  <script>
+    const STATE = {
+      books: [],
+      scanQueue: [],
+      activeTab: 'shelf',
+      viewMode: 'grid',
+      statusFilter: 'all',
+      pageFilter: 'all',
+      selectedGenres: new Set(),
+      searchQuery: '',
+      annualGoal: 12,
+      apiKey: '',
+      selectedBookId: null,
+      tempRating: 0,
+      scanner: null,
+      isScanning: false,
+      chatHistory: [],
+      lastScannedIsbn: null,
+      lastScannedTime: 0
+    };
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initPWA();
+      loadStoredData();
+      renderAll();
+    });
+
+    function initPWA() {
+      const manifest = {
+        name: "Bibliotheca",
+        short_name: "Bibliotheca",
+        start_url: "./index.html",
+        display: "standalone",
+        background_color: "#faf6ee",
+        theme_color: "#2d1e13",
+        icons: [{
+          src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232d1e13'/><text x='50' y='68' font-family='Georgia, serif' font-size='56' font-weight='bold' text-anchor='middle' fill='%23faf6ee'>B</text></svg>",
+          sizes: "192x192 512x512",
+          type: "image/svg+xml"
+        }]
+      };
+      const blob = new Blob([JSON.stringify(manifest)], { type: 'application/json' });
+      document.getElementById('pwa-manifest').setAttribute('href', URL.createObjectURL(blob));
+
+      if ('serviceWorker' in navigator) {
+        const sw = `
+          self.addEventListener('install', e => self.skipWaiting());
+          self.addEventListener('activate', e => clients.claim());
+          self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => caches.match(e.request))));
+        `;
+        navigator.serviceWorker.register(URL.createObjectURL(new Blob([sw], { type: 'application/javascript' }))).catch(() => {});
+      }
+    }
+
+    function loadStoredData() {
+      try {
+        const storedBooks = localStorage.getItem('biblio_books');
+        STATE.books = storedBooks ? JSON.parse(storedBooks) : [];
+
+        const storedQueue = localStorage.getItem('biblio_queue');
+        STATE.scanQueue = storedQueue ? JSON.parse(storedQueue) : [];
+
+        const storedKey = localStorage.getItem('biblio_gemini_key');
+        if (storedKey) {
+          STATE.apiKey = storedKey;
+          document.getElementById('gemini-api-key-input').value = storedKey;
+        }
+
+        const storedGoal = localStorage.getItem('biblio_annual_goal');
+        if (storedGoal) {
+          STATE.annualGoal = parseInt(storedGoal, 10) || 12;
+          document.getElementById('annual-goal-input').value = STATE.annualGoal;
+        }
+
+        const storedChat = localStorage.getItem('biblio_chat_history');
+        if (storedChat) {
+          STATE.chatHistory = JSON.parse(storedChat);
+          renderChatHistory();
+        }
+      } catch (err) {
+        console.error("Error al cargar localStorage:", err);
+      }
+    }
+
+    function saveBooks() {
+      localStorage.setItem('biblio_books', JSON.stringify(STATE.books));
+      renderAll();
+    }
+
+    function saveQueue() {
+      localStorage.setItem('biblio_queue', JSON.stringify(STATE.scanQueue));
+      renderScanQueue();
+    }
+
+    function renderAll() {
+      renderDashboardCounters();
+      renderGenresChips();
+      renderShelf();
+      renderStatistics();
+      updateApiStatusUI();
+    }
+
+    // AUDIO BEEP
+    function playBeep(freq = 780, duration = 0.12) {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        gain.gain.setValueAtTime(0.18, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + duration);
+      } catch (e) {}
+    }
+
+    function showToast(message) {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `bg-[#2d1e13] text-[#faf6ee] border border-[#2d1e13] px-3.5 py-2 rounded shadow-2xl text-xs pointer-events-auto transition-all duration-300 transform translate-y-2 opacity-0 serif`;
+      toast.innerText = message;
+      container.appendChild(toast);
+      setTimeout(() => toast.classList.remove('translate-y-2', 'opacity-0'), 20);
+      setTimeout(() => {
+        toast.classList.add('opacity-0', '-translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // NAVEGACIÓN ENTRE TABS
+    function switchTab(tabId) {
+      STATE.activeTab = tabId;
+      const views = ['shelf', 'assistant', 'settings'];
+      const subtitles = {
+        shelf: 'Catálogo General',
+        assistant: 'Asistente Bibliotecario',
+        settings: 'Archivo y Opciones'
+      };
+
+      views.forEach(v => {
+        const viewEl = document.getElementById(`tab-${v}-view`);
+        const btnEl = document.getElementById(`nav-btn-${v}`);
+        if (v === tabId) {
+          viewEl.classList.remove('hidden');
+          btnEl.classList.add('font-bold', 'text-[#2d1e13]');
+          btnEl.classList.remove('text-[#7d654a]');
+        } else {
+          viewEl.classList.add('hidden');
+          btnEl.classList.remove('font-bold', 'text-[#2d1e13]');
+          btnEl.classList.add('text-[#7d654a]');
+        }
+      });
+
+      document.getElementById('header-subtitle').innerText = subtitles[tabId];
+      if (tabId === 'assistant') {
+        document.getElementById('assistant-book-count').innerText = `${STATE.books.length} obras`;
+      }
+      if (tabId !== 'shelf' && STATE.isScanning) {
+        stopCamera();
+      }
+    }
+
+    // VISTAS Y FILTROS
+    function setViewMode(mode) {
+      STATE.viewMode = mode;
+      const gridBtn = document.getElementById('btn-view-grid');
+      const listBtn = document.getElementById('btn-view-list');
+      const gridView = document.getElementById('books-grid');
+      const listView = document.getElementById('books-list');
+
+      if (mode === 'grid') {
+        gridView.classList.remove('hidden');
+        listView.classList.add('hidden');
+        gridBtn.className = "px-2 py-1 bg-[#2d1e13] text-[#faf6ee] text-[9px] serif flex items-center gap-1";
+        listBtn.className = "px-2 py-1 bg-transparent text-[#2d1e13] text-[9px] serif flex items-center gap-1";
+      } else {
+        gridView.classList.add('hidden');
+        listView.classList.remove('hidden');
+        gridBtn.className = "px-2 py-1 bg-transparent text-[#2d1e13] text-[9px] serif flex items-center gap-1";
+        listBtn.className = "px-2 py-1 bg-[#2d1e13] text-[#faf6ee] text-[9px] serif flex items-center gap-1";
+      }
+    }
+
+    function selectStatusFilter(status) {
+      STATE.statusFilter = status;
+      const map = { 'all': 'stat-all', 'Leído': 'stat-read', 'Pendiente': 'stat-pending', 'Wishlist': 'stat-wishlist' };
+      ['all', 'read', 'pending', 'wishlist'].forEach(s => {
+        document.getElementById(`stat-${s}`).className = "cursor-pointer btn-outline p-1.5 rounded text-[10px] transition";
+      });
+      if (map[status]) {
+        document.getElementById(map[status]).className = "cursor-pointer btn-outline-active p-1.5 rounded text-[10px] transition";
+      }
+      renderShelf();
+    }
+
+    function togglePageFilter(filter, el) {
+      STATE.pageFilter = filter;
+      document.querySelectorAll('.page-filter-btn').forEach(btn => {
+        btn.className = "page-filter-btn btn-outline px-1.5 py-0.5 rounded serif";
+      });
+      el.className = "page-filter-btn btn-solid px-1.5 py-0.5 rounded serif";
+      renderShelf();
+    }
+
+    function handleSearch(query) {
+      STATE.searchQuery = query.toLowerCase().trim();
+      renderShelf();
+    }
+
+    function renderGenresChips() {
+      const container = document.getElementById('genres-container');
+      const genresSet = new Set();
+      STATE.books.forEach(b => {
+        if (b.genre) {
+          b.genre.split('/').forEach(g => genresSet.add(g.trim()));
+        }
+      });
+
+      if (genresSet.size === 0) {
+        container.innerHTML = '';
+        return;
+      }
+
+      container.innerHTML = Array.from(genresSet).map(g => {
+        const isSelected = STATE.selectedGenres.has(g);
+        const cls = isSelected ? 'btn-solid' : 'btn-outline';
+        return `<button onclick="toggleGenreTag('${g}')" class="${cls} px-2 py-0.5 rounded serif whitespace-nowrap text-[9px]">${g}</button>`;
+      }).join('');
+    }
+
+    function toggleGenreTag(genre) {
+      if (STATE.selectedGenres.has(genre)) {
+        STATE.selectedGenres.delete(genre);
+      } else {
+        STATE.selectedGenres.add(genre);
+      }
+      renderGenresChips();
+      renderShelf();
+    }
+
+    function renderDashboardCounters() {
+      const total = STATE.books.length;
+      const read = STATE.books.filter(b => b.status === 'Leído').length;
+      const pending = STATE.books.filter(b => b.status === 'Pendiente').length;
+      const wishlist = STATE.books.filter(b => b.status === 'Wishlist').length;
+
+      document.getElementById('count-total').innerText = total;
+      document.getElementById('count-read').innerText = read;
+      document.getElementById('count-pending').innerText = pending;
+      document.getElementById('count-wishlist').innerText = wishlist;
+    }
+
+    function renderShelf() {
+      const grid = document.getElementById('books-grid');
+      const list = document.getElementById('books-list');
+      const emptyEl = document.getElementById('shelf-empty');
+
+      const filtered = STATE.books.filter(b => {
+        // Filtro de texto
+        if (STATE.searchQuery) {
+          const matchTitle = (b.title || '').toLowerCase().includes(STATE.searchQuery);
+          const matchAuthor = (b.author || '').toLowerCase().includes(STATE.searchQuery);
+          const matchGenre = (b.genre || '').toLowerCase().includes(STATE.searchQuery);
+          if (!matchTitle && !matchAuthor && !matchGenre) return false;
+        }
+
+        // Filtro de estado
+        if (STATE.statusFilter !== 'all' && b.status !== STATE.statusFilter) {
+          return false;
+        }
+
+        // Filtro de extensión de páginas
+        const pages = parseInt(b.pages, 10) || 0;
+        if (STATE.pageFilter === 'short' && pages >= 200) return false;
+        if (STATE.pageFilter === 'medium' && (pages < 200 || pages > 400)) return false;
+        if (STATE.pageFilter === 'long' && pages <= 400) return false;
+
+        // Filtro de género
+        if (STATE.selectedGenres.size > 0) {
+          const bookGenres = (b.genre || '').split('/').map(g => g.trim());
+          const hasMatch = Array.from(STATE.selectedGenres).some(sg => bookGenres.includes(sg));
+          if (!hasMatch) return false;
+        }
+
+        return true;
+      });
+
+      if (STATE.books.length === 0) {
+        grid.innerHTML = '';
+        list.innerHTML = '';
+        emptyEl.classList.remove('hidden');
+        return;
+      }
+
+      emptyEl.classList.add('hidden');
+
+      if (filtered.length === 0) {
+        const emptyMsg = `<div class="col-span-2 text-center py-10 text-[#7d654a] serif italic text-xs">No se hallaron obras que coincidan con estos criterios.</div>`;
+        grid.innerHTML = emptyMsg;
+        list.innerHTML = emptyMsg;
+        return;
+      }
+
+      // Render Grilla
+      grid.innerHTML = filtered.map(b => {
+        const pages = parseInt(b.pages, 10) || 0;
+        const estHours = pages > 0 ? `~${Math.round((pages / 50) * 10) / 10} hs` : '';
+        const stars = generateStarsDisplay(b.rating || 0);
+
+        const coverHtml = b.cover ? `
+          <img src="${b.cover}" alt="${b.title}" onerror="this.onerror=null; this.src='https://covers.openlibrary.org/b/isbn/${b.isbn}-M.jpg'" class="w-full h-44 object-cover rounded book-spine">
+        ` : `
+          <div class="w-full h-44 rounded bg-[#2d1e13] border border-[#2d1e13] p-3 flex flex-col justify-between text-[#faf6ee] book-spine">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-5 h-5 text-[#faf6ee]/70"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+            <div>
+              <p class="font-bold text-xs serif line-clamp-3">${b.title}</p>
+              <p class="text-[9px] text-[#faf6ee]/70 truncate mt-1 italic">${b.author}</p>
+            </div>
+          </div>
+        `;
+
+        return `
+          <div onclick="openBookModal('${b.id}')" class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-2 cursor-pointer hover:border-[#2d1e13] transition shadow-sm flex flex-col justify-between">
+            <div class="relative rounded overflow-hidden mb-1.5 book-shadow aspect-[2/3] bg-[#2d1e13]">
+              ${coverHtml}
+              <span class="absolute top-1 right-1 bg-[#2d1e13] text-[#faf6ee] text-[8px] px-1 py-0.5 rounded serif">
+                ${b.status}
+              </span>
+            </div>
+            <div>
+              <h3 class="font-bold text-[11px] text-[#2d1e13] truncate serif">${b.title}</h3>
+              <p class="text-[9px] text-[#7d654a] truncate italic">${b.author}</p>
+              <div class="flex items-center justify-between text-[8px] text-[#7d654a] pt-1 border-t border-[#2d1e13]/10 mt-1">
+                <span>${pages > 0 ? `${pages}p • ${estHours}` : (b.year || 'N/A')}</span>
+                <span class="font-bold text-[#2d1e13]">${stars}</span>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Render Lista
+      list.innerHTML = filtered.map(b => {
+        const pages = parseInt(b.pages, 10) || 0;
+        const estHours = pages > 0 ? `(~${Math.round((pages / 50) * 10) / 10} hs)` : '';
+        const stars = generateStarsDisplay(b.rating || 0);
+
+        return `
+          <div onclick="openBookModal('${b.id}')" class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-2 flex items-center justify-between cursor-pointer hover:border-[#2d1e13] transition shadow-xs">
+            <div class="min-w-0 pr-2">
+              <h4 class="font-bold text-[11px] text-[#2d1e13] truncate serif">${b.title}</h4>
+              <p class="text-[9px] text-[#7d654a] truncate italic">
+                ${b.author} • ${pages > 0 ? `${pages} págs ${estHours}` : b.year} ${stars ? '• ' + stars : ''}
+              </p>
+            </div>
+            <span class="shrink-0 text-[8px] border border-[#2d1e13] px-1.5 py-0.5 rounded serif">${b.status}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function generateStarsDisplay(rating) {
+      if (!rating || rating === 0) return '';
+      return '★'.repeat(rating) + '☆'.repeat(5 - rating);
+    }
+
+    // ==========================================
+    // MODAL DE DETALLE / EDICIÓN & ESTRELLAS EDITABLES
+    // ==========================================
+    function openBookModal(id) {
+      const book = STATE.books.find(b => b.id === id);
+      if (!book) return;
+      STATE.selectedBookId = id;
+      STATE.tempRating = book.rating || 0;
+
+      document.getElementById('modal-title').innerText = book.title;
+      document.getElementById('modal-author').innerText = book.author;
+      document.getElementById('modal-genre-badge').innerText = book.genre || 'Literatura';
+      document.getElementById('modal-synopsis').innerText = book.synopsis || 'Sin sinopsis disponible.';
+
+      const pages = parseInt(book.pages, 10) || 0;
+      const hours = pages > 0 ? Math.round((pages / 50) * 10) / 10 : 0;
+      document.getElementById('modal-pages-estimate').innerText = pages > 0 ? `${pages} páginas • ~${hours} horas de lectura` : `Año: ${book.year || 'N/A'}`;
+
+      const coverImg = document.getElementById('modal-cover');
+      coverImg.src = book.cover || `https://covers.openlibrary.org/b/isbn/${book.isbn}-M.jpg`;
+      document.getElementById('modal-cover-input').value = book.cover || '';
+
+      document.getElementById('modal-loan-name').value = (book.loan && book.loan.borrower) || '';
+      document.getElementById('modal-loan-phone').value = (book.loan && book.loan.phone) || '';
+
+      renderModalStars(STATE.tempRating);
+      updateModalStatusUI(book.status || 'Pendiente');
+
+      document.getElementById('book-modal').classList.remove('hidden');
+    }
+
+    function closeBookModal() {
+      document.getElementById('book-modal').classList.add('hidden');
+      STATE.selectedBookId = null;
+    }
+
+    // CALIFICACIÓN INTERACTIVA DE 1 A 5 ESTRELLAS
+    function setBookRating(stars) {
+      STATE.tempRating = stars;
+      renderModalStars(stars);
+      const book = STATE.books.find(b => b.id === STATE.selectedBookId);
+      if (book) {
+        book.rating = stars;
+        saveToStorage();
+        renderBooks();
+        renderStats();
+        showToast(stars > 0 ? `Calificación: ${stars} estrellas` : 'Calificación removida');
+      }
+    }
+
+    function renderModalStars(rating) {
+      const starItems = document.querySelectorAll('#modal-stars-container .star-item');
+      starItems.forEach((item, idx) => {
+        if (idx < rating) {
+          item.innerText = '★';
+          item.className = 'star-item px-1 py-0.5 text-base text-[#2d1e13] font-bold hover:scale-125 transition';
+        } else {
+          item.innerText = '☆';
+          item.className = 'star-item px-1 py-0.5 text-base text-[#7d654a] hover:scale-125 transition';
+        }
+      });
+    }
+
+    // CAMBIO DIRECTO DE ESTADOS EN EL MODAL
+    function changeBookStatus(newStatus) {
+      const book = STATE.books.find(b => b.id === STATE.selectedBookId);
+      if (book) {
+        book.status = newStatus;
+        if (newStatus === 'Leído' && !book.readDate) {
+          book.readDate = new Date().toISOString();
+        }
+        updateModalStatusUI(newStatus);
+        saveToStorage();
+        renderBooks();
+        renderStats();
+        showToast(`Estado cambiado a "${newStatus}"`);
+      }
+    }
+
+    function updateModalStatusUI(status) {
+      document.getElementById('modal-current-status-badge').innerText = status;
+      const buttons = {
+        'Wishlist': 'mbtn-status-wishlist',
+        'Pendiente': 'mbtn-status-pending',
+        'Leyendo': 'mbtn-status-reading',
+        'Leído': 'mbtn-status-read'
+      };
+
+      Object.entries(buttons).forEach(([st, btnId]) => {
+        const btn = document.getElementById(btnId);
+        if (st === status) {
+          btn.className = "btn-solid py-1 rounded";
+        } else {
+          btn.className = "btn-outline py-1 rounded";
+        }
+      });
+
+      const actionBtn = document.getElementById('modal-quick-action-btn');
+      if (status === 'Wishlist') {
+        actionBtn.innerText = "Pasar a Sin leer (Comprado)";
+        actionBtn.onclick = () => changeBookStatus('Pendiente');
+      } else if (status === 'Pendiente') {
+        actionBtn.innerText = "Empezar a leer (Pasar a Leyendo)";
+        actionBtn.onclick = () => changeBookStatus('Leyendo');
+      } else if (status === 'Leyendo') {
+        actionBtn.innerText = "Marcar como terminado (Pasar a Leído)";
+        actionBtn.onclick = () => changeBookStatus('Leído');
+      } else {
+        actionBtn.innerText = "Desmarcar lectura (Volver a Sin leer)";
+        actionBtn.onclick = () => changeBookStatus('Pendiente');
+      }
+    }
+
+    function applyQuickStatusAction() {
+      // Manejado dinámicamente por actionBtn.onclick
+    }
+
+    function handleCoverFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const base64 = e.target.result;
+        document.getElementById('modal-cover').src = base64;
+        document.getElementById('modal-cover-input').value = base64;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function saveBookModalChanges() {
+      if (!STATE.selectedBookId) return;
+      const book = STATE.books.find(b => b.id === STATE.selectedBookId);
+      if (!book) return;
+
+      book.rating = STATE.tempRating;
+      const customCover = document.getElementById('modal-cover-input').value.trim();
+      if (customCover) book.cover = customCover;
+
+      const borrower = document.getElementById('modal-loan-name').value.trim();
+      const phone = document.getElementById('modal-loan-phone').value.trim();
+      book.loan = { borrower, phone };
+
+      saveBooks();
+      closeBookModal();
+      showToast("Ficha actualizada correctamente");
+    }
+
+    function deleteCurrentBook() {
+      if (!STATE.selectedBookId) return;
+      if (!confirm("¿Desea retirar esta obra de su biblioteca?")) return;
+
+      STATE.books = STATE.books.filter(b => b.id !== STATE.selectedBookId);
+      saveBooks();
+      closeBookModal();
+      showToast("Obra retirada del catálogo");
+    }
+
+    function sendWhatsAppReminder() {
+      if (!STATE.selectedBookId) return;
+      const book = STATE.books.find(b => b.id === STATE.selectedBookId);
+      if (!book) return;
+
+      const borrower = document.getElementById('modal-loan-name').value.trim();
+      const phone = document.getElementById('modal-loan-phone').value.trim();
+
+      if (!borrower || !phone) {
+        showToast("Complete nombre y teléfono para enviar el mensaje");
+        return;
+      }
+
+      const cleanPhone = phone.replace(/[^0-9]/g, '');
+      const text = `Estimado/a ${borrower}: Le escribo para consultar cómo marcha su lectura de "${book.title}". ¡Avisame cuando puedas para coordinar la devolución!`;
+      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`, '_blank');
+    }
+
+    // ==========================================
+    // MODAL AÑADIR LIBRO: BÚSQUEDA O CÁMARA
+    // ==========================================
+    function openSmartAddModal() {
+      document.getElementById('smart-add-modal').classList.remove('hidden');
+      switchAddTab('search');
+    }
+
+    function closeSmartAddModal() {
+      document.getElementById('smart-add-modal').classList.add('hidden');
+      stopCamera();
+    }
+
+    function switchAddTab(tab) {
+      const searchTabBtn = document.getElementById('tab-add-search-btn');
+      const scanTabBtn = document.getElementById('tab-add-scan-btn');
+      const searchMode = document.getElementById('add-mode-search');
+      const scanMode = document.getElementById('add-mode-scan');
+
+      if (tab === 'search') {
+        searchMode.classList.remove('hidden');
+        scanMode.classList.add('hidden');
+        searchTabBtn.className = "btn-solid py-1 rounded font-bold";
+        scanTabBtn.className = "btn-outline py-1 rounded";
+        stopCamera();
+      } else {
+        searchMode.classList.add('hidden');
+        scanMode.classList.remove('hidden');
+        searchTabBtn.className = "btn-outline py-1 rounded";
+        scanTabBtn.className = "btn-solid py-1 rounded font-bold";
+        startCamera();
+      }
+    }
+
+    // BÚSQUEDA PREDICTIVA POR TÍTULO O AUTOR
+    async function executeSmartSearch() {
+      const query = document.getElementById('smart-search-input').value.trim();
+      if (!query) return;
+
+      const loading = document.getElementById('smart-search-loading');
+      const resultsContainer = document.getElementById('smart-search-results');
+
+      loading.classList.remove('hidden');
+      resultsContainer.innerHTML = '';
+
+      try {
+        const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=6`;
+        const res = await fetch(url);
+        const data = await res.json();
+        loading.classList.add('hidden');
+
+        if (!data.items || data.items.length === 0) {
+          resultsContainer.innerHTML = `<p class="text-xs text-[#7d654a] serif text-center py-4 italic">No se hallaron coincidencias para "${query}".</p>`;
+          return;
+        }
+
+        resultsContainer.innerHTML = data.items.map((item, idx) => {
+          const vol = item.volumeInfo || {};
+          const title = vol.title || 'Sin título';
+          const author = vol.authors ? vol.authors.join(', ') : 'Autor Desconocido';
+          const year = vol.publishedDate ? vol.publishedDate.substring(0, 4) : '';
+          const pages = vol.pageCount || 0;
+          const cover = vol.imageLinks ? (vol.imageLinks.thumbnail || vol.imageLinks.smallThumbnail || '').replace('http:', 'https:') : '';
+          const isbn = vol.industryIdentifiers ? (vol.industryIdentifiers[0]?.identifier || '') : '';
+
+          const encodedBook = encodeURIComponent(JSON.stringify({
+            id: 'book-' + Date.now() + '-' + idx,
+            isbn: isbn,
+            title: title,
+            author: author,
+            year: year,
+            pages: pages,
+            cover: cover,
+            synopsis: vol.description || 'Sin sinopsis disponible.',
+            genre: vol.categories ? vol.categories.join(' / ') : 'Literatura',
+            rating: 0,
+            origin: '',
+            loan: { borrower: '', phone: '' },
+            addedAt: new Date().toISOString()
+          }));
+
+          return `
+            <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 p-2 rounded flex gap-2 items-center justify-between">
+              <img src="${cover || 'data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 40 60\'><rect width=\'40\' height=\'60\' fill=\'%232d1e13\'/></svg>'}" class="w-8 h-12 object-cover rounded shadow shrink-0 bg-[#2d1e13]">
+              <div class="flex-1 min-w-0 pr-1 text-[10px]">
+                <p class="font-bold truncate serif text-[#2d1e13]">${title}</p>
+                <p class="text-[#7d654a] italic text-[9px] truncate">${author} ${year ? '• ' + year : ''}</p>
+                <p class="text-[#7d654a] text-[8px]">${pages > 0 ? `${pages} páginas` : ''}</p>
+              </div>
+              <div class="flex flex-col gap-1 shrink-0">
+                <button onclick="addCandidateToCollection('${encodedBook}', 'Pendiente')" class="btn-solid text-[8px] px-1.5 py-0.5 rounded font-bold">+ Sin leer</button>
+                <button onclick="addCandidateToCollection('${encodedBook}', 'Wishlist')" class="btn-outline text-[8px] px-1.5 py-0.5 rounded font-bold">+ Wishlist</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        loading.classList.add('hidden');
+        resultsContainer.innerHTML = `<p class="text-xs text-[#7d2929] serif text-center py-2">Error al consultar catálogo. Compruebe su conexión.</p>`;
+      }
+    }
+
+    function addCandidateToCollection(encodedBook, destinationStatus) {
+      const book = JSON.parse(decodeURIComponent(encodedBook));
+      book.status = destinationStatus;
+      STATE.books.unshift(book);
+      saveBooks();
+      closeSmartAddModal();
+      showToast(`¡"${book.title}" añadido a ${destinationStatus === 'Wishlist' ? 'la Lista de Deseos' : 'su Estantería'}!`);
+      switchTab('shelf');
+    }
+
+    // ESCÁNER FÍSICO CONTINUO
+    function toggleCamera() {
+      if (STATE.isScanning) stopCamera();
+      else startCamera();
+    }
+
+    async function startCamera() {
+      const ctrlBtn = document.getElementById('camera-ctrl-btn');
+      const statusLabel = document.getElementById('camera-status-label');
+
+      try {
+        if (!STATE.scanner) {
+          STATE.scanner = new Html5Qrcode("reader");
+        }
+
+        const config = { fps: 15, qrbox: { width: 220, height: 140 }, aspectRatio: 1.333333 };
+        statusLabel.innerText = "Iniciando visor...";
+
+        await STATE.scanner.start(
+          { facingMode: "environment" },
+          config,
+          onScanSuccess,
+          () => {}
+        );
+
+        STATE.isScanning = true;
+        ctrlBtn.innerText = "Detener Cámara";
+        statusLabel.innerText = "Visor activo";
+        document.getElementById('laser-line').classList.remove('hidden');
+      } catch (e) {
+        statusLabel.innerText = "Cámara no disponible";
+        showToast("No se pudo acceder a la cámara en este origen.");
+      }
+    }
+
+    async function stopCamera() {
+      if (STATE.scanner && STATE.isScanning) {
+        try { await STATE.scanner.stop(); } catch (e) {}
+        STATE.isScanning = false;
+        document.getElementById('camera-ctrl-btn').innerText = "Iniciar Cámara";
+        document.getElementById('camera-status-label').innerText = "Cámara detenida";
+        document.getElementById('laser-line').classList.add('hidden');
+      }
+    }
+
+    function onScanSuccess(decodedText) {
+      const cleanCode = decodedText.replace(/[^0-9X]/gi, '').trim();
+      if (cleanCode.length < 10) return;
+
+      const now = Date.now();
+      if (cleanCode === STATE.lastScannedIsbn && (now - STATE.lastScannedTime) < 2500) return;
+
+      STATE.lastScannedIsbn = cleanCode;
+      STATE.lastScannedTime = now;
+
+      playBeep(780, 0.12);
+      if (navigator.vibrate) navigator.vibrate(80);
+
+      const overlay = document.getElementById('scanner-overlay');
+      overlay.classList.add('scan-flash');
+      setTimeout(() => overlay.classList.remove('scan-flash'), 350);
+
+      if (!STATE.scanQueue.includes(cleanCode)) {
+        STATE.scanQueue.push(cleanCode);
+        saveQueue();
+        showToast(`ISBN ${cleanCode} añadido a la cola`);
+      }
+    }
+
+    function renderScanQueue() {
+      const countEl = document.getElementById('scan-queue-count');
+      const listEl = document.getElementById('scan-queue-list');
+      const saveBtn = document.getElementById('batch-save-btn');
+
+      countEl.innerText = `${STATE.scanQueue.length} códigos`;
+
+      if (STATE.scanQueue.length === 0) {
+        listEl.innerHTML = `<p class="text-[#7d654a] italic text-center py-2">No hay códigos en cola.</p>`;
+        saveBtn.disabled = true;
+      } else {
+        saveBtn.disabled = false;
+        listEl.innerHTML = STATE.scanQueue.map((isbn, idx) => `
+          <div class="flex justify-between items-center bg-white px-2 py-1 rounded border border-[#2d1e13]/20">
+            <span class="font-mono text-[#2d1e13] font-bold">${isbn}</span>
+            <button onclick="removeFromScanQueue(${idx})" class="text-[#7d2929] px-1 font-bold">✕</button>
+          </div>
+        `).join('');
+      }
+    }
+
+    function removeFromScanQueue(idx) {
+      STATE.scanQueue.splice(idx, 1);
+      saveQueue();
+    }
+
+    async function processBatchQueue() {
+      if (STATE.scanQueue.length === 0) return;
+      const saveBtn = document.getElementById('batch-save-btn');
+      saveBtn.disabled = true;
+      saveBtn.innerText = "Consultando catálogos...";
+
+      const queue = [...STATE.scanQueue];
+      let added = 0;
+
+      for (const isbn of queue) {
+        try {
+          const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+          const data = await res.json();
+          if (data.items && data.items.length > 0) {
+            const vol = data.items[0].volumeInfo || {};
+            STATE.books.unshift({
+              id: 'isbn-' + isbn + '-' + Date.now(),
+              isbn: isbn,
+              title: vol.title || `Libro ${isbn}`,
+              author: vol.authors ? vol.authors.join(', ') : 'Autor Desconocido',
+              year: vol.publishedDate ? vol.publishedDate.substring(0, 4) : '',
+              pages: vol.pageCount || 0,
+              cover: vol.imageLinks ? (vol.imageLinks.thumbnail || '').replace('http:', 'https:') : `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
+              synopsis: vol.description || 'Sin sinopsis disponible.',
+              genre: vol.categories ? vol.categories.join(' / ') : 'Literatura',
+              status: 'Pendiente',
+              rating: 0,
+              origin: '',
+              loan: { borrower: '', phone: '' },
+              addedAt: new Date().toISOString()
+            });
+            added++;
+          }
+        } catch (e) {}
+      }
+
+      STATE.scanQueue = [];
+      saveQueue();
+      saveBooks();
+      closeSmartAddModal();
+      showToast(`¡${added} libros enriquecidos y catalogados!`);
+      switchTab('shelf');
+    }
+
+    // ==========================================
+    // ASISTENTE DE LECTURA (IA GEMINI)
+    // ==========================================
+    async function sendMessage() {
+      const input = document.getElementById('chat-input');
+      const query = input.value.trim();
+      if (!query) return;
+
+      if (!STATE.apiKey) {
+        showToast("Configure su clave de Gemini en Archivo");
+        switchTab('settings');
+        return;
+      }
+
+      input.value = '';
+      appendChatMessage('user', query);
+      const typingId = appendTypingIndicator();
+
+      try {
+        const responseText = await queryGeminiWithContext(query);
+        removeTypingIndicator(typingId);
+        appendChatMessage('assistant', responseText);
+      } catch (err) {
+        removeTypingIndicator(typingId);
+        appendChatMessage('assistant', `Ocurrió una interrupción al consultar con el asistente: ${err.message}. Compruebe su clave en Archivo.`);
+      }
+    }
+
+    function sendQuickPrompt(prompt) {
+      document.getElementById('chat-input').value = prompt;
+      sendMessage();
+    }
+
+    async function queryGeminiWithContext(userMessage) {
+      const catalogSummary = STATE.books.map((b, i) => {
+        const ratingStr = b.rating > 0 ? ` [Calificación: ${b.rating}/5 estrellas]` : '';
+        const loanStr = (b.loan && b.loan.borrower) ? ` [Prestado a: ${b.loan.borrower}]` : '';
+        return `${i + 1}. "${b.title}" de ${b.author} (${b.year || 'N/A'}). Materia: ${b.genre || 'Literatura'}. Páginas: ${b.pages || 'N/A'}. Estado: ${b.status}.${ratingStr}${loanStr} Argumento: ${b.synopsis ? b.synopsis.slice(0, 200) + '...' : 'N/A'}`;
+      }).join('\n');
+
+      const systemPrompt = `Usted es el distinguido y culto Asistente Bibliotecario de la colección personal del usuario.
+Su cometido es dialogar, reflexionar y recomendar lecturas basándose en los libros que el usuario atesora en sus propios anaqueles.
+
+Catálogo de la biblioteca (${STATE.books.length} obras):
+${catalogSummary || '(La biblioteca aún no posee obras registradas)'}
+
+Pautas para sus respuestas:
+1. Examine a fondo las sinopsis y argumentos de los libros listados, no únicamente sus materias o géneros formales. Por ejemplo, si el usuario indaga por fútbol, deporte, barrio, venganza o soledad, identifique qué libros tocan esos temas en sus tramas aunque estén clasificados como Ficción o Policial.
+2. Tenga muy en cuenta las obras a las que el usuario otorgó 4 o 5 estrellas para afinar sus sugerencias y elogiar sus gustos.
+3. Si una obra sugerida se halla en estado "Prestado", coméntelo con cortesía.
+4. Redacte en español sereno, formal, elocuente y literario. Use formato Markdown limpio.`;
+
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${STATE.apiKey}`;
+      const payload = {
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [
+          ...STATE.chatHistory.slice(-6).map(m => ({
+            role: m.role === 'user' ? 'user' : 'model',
+            parts: [{ text: m.text }]
+          })),
+          { role: 'user', parts: [{ text: userMessage }] }
+        ],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 800 }
+      };
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error?.message || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      const outputText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!outputText) throw new Error("Respuesta vacía");
+
+      return outputText;
+    }
+
+    function appendChatMessage(role, text) {
+      STATE.chatHistory.push({ role, text });
+      localStorage.setItem('biblio_chat_history', JSON.stringify(STATE.chatHistory));
+      renderChatHistory();
+    }
+
+    function renderChatHistory() {
+      const container = document.getElementById('chat-messages');
+      container.innerHTML = `
+        <div class="flex gap-2.5 items-start">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 text-[#2d1e13] shrink-0 mt-0.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-3 text-[#2d1e13] max-w-[85%] leading-relaxed serif space-y-1">
+            <p>Bienvenido. Soy su <strong>Asistente Bibliotecario</strong>.</p>
+            <p class="text-[11px] text-[#7d654a]">Poseo conocimiento profundo de las sinopsis, materias y calificaciones de los volúmenes en sus estantes. Puede consultarme temáticas específicas (ej: fútbol, relatos breves, misterios) o pedirme orientación para su próxima lectura.</p>
+          </div>
+        </div>
+      `;
+
+      STATE.chatHistory.forEach(msg => {
+        const isUser = msg.role === 'user';
+        const msgDiv = document.createElement('div');
+        msgDiv.className = isUser ? 'flex justify-end' : 'flex gap-2.5 items-start';
+
+        const formatted = msg.text
+          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+          .replace(/\*(.*?)\*/g, '<em>$1</em>')
+          .replace(/\n/g, '<br>');
+
+        if (isUser) {
+          msgDiv.innerHTML = `
+            <div class="btn-solid rounded p-2.5 text-xs max-w-[85%] serif leading-relaxed">
+              ${formatted}
+            </div>
+          `;
+        } else {
+          msgDiv.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 text-[#2d1e13] shrink-0 mt-0.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-2.5 text-[#2d1e13] max-w-[85%] leading-relaxed serif text-xs">
+              ${formatted}
+            </div>
+          `;
+        }
+        container.appendChild(msgDiv);
+      });
+
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function appendTypingIndicator() {
+      const container = document.getElementById('chat-messages');
+      const id = 'typing-' + Date.now();
+      const div = document.createElement('div');
+      div.id = id;
+      div.className = 'flex gap-2.5 items-start';
+      div.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 text-[#2d1e13] shrink-0 mt-0.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+        <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-2 text-[#7d654a] text-xs serif italic">
+          Consultando argumentos y sinopsis del catálogo...
+        </div>
+      `;
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+      return id;
+    }
+
+    function removeTypingIndicator(id) {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    }
+
+    // ==========================================
+    // ARCHIVO: METAS, ESTADÍSTICAS Y EXPORTACIÓN
+    // ==========================================
+    function saveAnnualGoal() {
+      const val = parseInt(document.getElementById('annual-goal-input').value, 10);
+      if (val > 0) {
+        STATE.annualGoal = val;
+        localStorage.setItem('biblio_annual_goal', val);
+        renderStatistics();
+        showToast("Meta anual actualizada");
+      }
+    }
+
+    function renderStatistics() {
+      const readBooks = STATE.books.filter(b => b.status === 'Leído');
+      const yearCount = readBooks.length;
+      document.getElementById('stat-year-count').innerText = `${yearCount} libros`;
+      document.getElementById('stat-month-count').innerText = `${Math.min(yearCount, 1)} libro`;
+
+      // Total páginas y horas
+      let totalPages = 0;
+      readBooks.forEach(b => {
+        totalPages += (parseInt(b.pages, 10) || 0);
+      });
+      document.getElementById('stat-pages-count').innerText = `${totalPages.toLocaleString()} págs`;
+      const estHours = Math.round(totalPages / 50);
+      document.getElementById('stat-hours-count').innerText = `~${estHours} horas`;
+
+      // Género y Autor dominante
+      const genreCounts = {};
+      const authorCounts = {};
+      readBooks.forEach(b => {
+        if (b.genre) {
+          b.genre.split('/').forEach(g => {
+            const clean = g.trim();
+            genreCounts[clean] = (genreCounts[clean] || 0) + 1;
+          });
+        }
+        if (b.author) {
+          authorCounts[b.author] = (authorCounts[b.author] || 0) + 1;
+        }
+      });
+
+      const topGenre = Object.keys(genreCounts).sort((a, b) => genreCounts[b] - genreCounts[a])[0];
+      const topAuthor = Object.keys(authorCounts).sort((a, b) => authorCounts[b] - authorCounts[a])[0];
+
+      document.getElementById('stat-top-genre').innerText = topGenre || 'N/A';
+      document.getElementById('stat-top-author').innerText = topAuthor || 'N/A';
+
+      // Meta Anual
+      const goal = STATE.annualGoal || 12;
+      const pct = Math.min(Math.round((yearCount / goal) * 100), 100);
+      document.getElementById('goal-summary-text').innerText = `${yearCount} de ${goal} libros (${pct}%)`;
+      document.getElementById('goal-progress-bar').style.width = `${pct}%`;
+    }
+
+    function saveApiKey() {
+      const input = document.getElementById('gemini-api-key-input');
+      const key = input.value.trim();
+      if (!key) {
+        showToast("Ingrese una clave válida");
+        return;
+      }
+      STATE.apiKey = key;
+      localStorage.setItem('biblio_gemini_key', key);
+      updateApiStatusUI();
+      showToast("Clave guardada correctamente");
+    }
+
+    function updateApiStatusUI() {
+      const badge = document.getElementById('api-status-badge');
+      if (STATE.apiKey) {
+        badge.innerText = 'Conectada';
+        badge.className = 'text-[8px] border border-[#2d1e13] bg-[#2d1e13] text-[#faf6ee] px-1 rounded font-bold';
+      } else {
+        badge.innerText = 'Sin clave';
+        badge.className = 'text-[8px] border border-[#7d654a] text-[#7d654a] px-1 rounded font-serif';
+      }
+    }
+
+    // EXPORTACIÓN JSON
+    function exportJSON() {
+      if (STATE.books.length === 0) {
+        showToast("No hay obras para exportar");
+        return;
+      }
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(STATE.books, null, 2));
+      const a = document.createElement('a');
+      a.setAttribute("href", dataStr);
+      a.setAttribute("download", `catalogo_bibliotheca_${new Date().toISOString().slice(0,10)}.json`);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      showToast("Archivo JSON exportado");
+    }
+
+    function importJSON(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const imported = JSON.parse(e.target.result);
+          if (!Array.isArray(imported)) throw new Error("Formato inválido.");
+
+          const existingIds = new Set(STATE.books.map(b => b.isbn || b.id));
+          let count = 0;
+          imported.forEach(b => {
+            if (!existingIds.has(b.isbn || b.id)) {
+              STATE.books.push(b);
+              count++;
+            }
+          });
+
+          saveBooks();
+          showToast(`¡Se importaron ${count} libros nuevos!`);
+          switchTab('shelf');
+        } catch (err) {
+          showToast("Error al importar archivo: " + err.message);
+        }
+      };
+      reader.readAsText(file);
+      event.target.value = '';
+    }
+
+    // EXPORTACIÓN CSV
+    function exportCSV() {
+      if (STATE.books.length === 0) {
+        showToast("No hay obras para exportar");
+        return;
+      }
+
+      const headers = ["ISBN", "Título", "Autor", "Año", "Páginas", "Materia", "Estado", "Calificación", "Prestado a", "Teléfono"];
+      const rows = STATE.books.map(b => [
+        `"${(b.isbn || '').replace(/"/g, '""')}"`,
+        `"${(b.title || '').replace(/"/g, '""')}"`,
+        `"${(b.author || '').replace(/"/g, '""')}"`,
+        `"${(b.year || '').replace(/"/g, '""')}"`,
+        `"${b.pages || ''}"`,
+        `"${(b.genre || '').replace(/"/g, '""')}"`,
+        `"${(b.status || '').replace(/"/g, '""')}"`,
+        `"${b.rating || 0}"`,
+        `"${(b.loan?.borrower || '').replace(/"/g, '""')}"`,
+        `"${(b.loan?.phone || '').replace(/"/g, '""')}"`
+      ]);
+
+      const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\r\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `catalogo_bibliotheca_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      showToast("Catálogo CSV exportado");
+    }
+
+    // CARGAR MUESTRA
+    function loadDemoBooks() {
+      STATE.books = [
+        {
+          id: 'demo-1',
+          isbn: '9788497593793',
+          title: 'Cien años de soledad',
+          author: 'Gabriel García Márquez',
+          year: '1967',
+          pages: 471,
+          cover: 'https://covers.openlibrary.org/b/isbn/9788497593793-M.jpg',
+          synopsis: 'La novela relata la saga de la familia Buendía en Macondo. Una de las creaciones más trascendentales del realismo mágico hispanoamericano.',
+          genre: 'Ficción / Realismo Mágico',
+          status: 'Leído',
+          rating: 5,
+          origin: '1ra Edición Sudamericana',
+          loan: { borrower: '', phone: '' },
+          addedAt: new Date().toISOString()
+        },
+        {
+          id: 'demo-2',
+          isbn: '9788420651262',
+          title: '1984',
+          author: 'George Orwell',
+          year: '1949',
+          pages: 352,
+          cover: 'https://covers.openlibrary.org/b/isbn/9788420651262-M.jpg',
+          synopsis: 'Inquietante distopía política que describe una sociedad totalitaria vigilada permanentemente por el Gran Hermano y la Policía del Pensamiento.',
+          genre: 'Ciencia Ficción / Distopía',
+          status: 'Leído',
+          rating: 4,
+          origin: 'Feria del Libro',
+          loan: { borrower: '', phone: '' },
+          addedAt: new Date().toISOString()
+        },
+        {
+          id: 'demo-3',
+          isbn: '9788420633114',
+          title: 'Ficciones',
+          author: 'Jorge Luis Borges',
+          year: '1944',
+          pages: 224,
+          cover: 'https://covers.openlibrary.org/b/isbn/9788420633114-M.jpg',
+          synopsis: 'Colección de relatos laberínticos, espejos, paradojas y bibliotecas infinitas que transformaron la literatura hispánica del siglo XX.',
+          genre: 'Cuentos / Filosofía',
+          status: 'Leído',
+          rating: 5,
+          origin: 'Colección Personal',
+          loan: { borrower: 'Lucía Ramos', phone: '+5491198765432' },
+          addedAt: new Date().toISOString()
+        },
+        {
+          id: 'demo-4',
+          isbn: '9789505115983',
+          title: 'Esperándolo a Tito y otros cuentos de fútbol',
+          author: 'Eduardo Sacheri',
+          year: '2000',
+          pages: 240,
+          cover: 'https://covers.openlibrary.org/b/isbn/9789505115983-M.jpg',
+          synopsis: 'Cuentos inolvidables ambientados en el fútbol de potrero y los clubes de barrio del conurbano bonaerense, donde el juego es el escenario de la lealtad, la revancha y la amistad.',
+          genre: 'Ficción / Cuentos',
+          status: 'Pendiente',
+          rating: 0,
+          origin: 'Recomendación literaria',
+          loan: { borrower: '', phone: '' },
+          addedAt: new Date().toISOString()
+        },
+        {
+          id: 'demo-5',
+          isbn: '9788445073728',
+          title: 'El Hobbit',
+          author: 'J.R.R. Tolkien',
+          year: '1937',
+          pages: 310,
+          cover: 'https://covers.openlibrary.org/b/isbn/9788445073728-M.jpg',
+          synopsis: 'La travesía del hobbit Bilbo Bolsón para recuperar el tesoro custodiado por el dragón Smaug en la Montaña Solitaria.',
+          genre: 'Fantasía Clásica',
+          status: 'Wishlist',
+          rating: 0,
+          origin: '',
+          loan: { borrower: '', phone: '' },
+          addedAt: new Date().toISOString()
+        }
+      ];
+
+      saveBooks();
+      showToast("¡5 obras clásicas de muestra cargadas!");
+      switchTab('shelf');
+    }
+
+    function confirmClearDatabase() {
+      if (confirm("¿Seguro que desea vaciar toda su biblioteca? Esta acción no se puede deshacer.")) {
+        STATE.books = [];
+        STATE.scanQueue = [];
+        STATE.chatHistory = [];
+        saveBooks();
+        saveQueue();
+        localStorage.removeItem('biblio_chat_history');
+        renderChatHistory();
+        showToast("Biblioteca vaciada");
+        switchTab('shelf');
+      }
+    }
+  </script>
+</body>
+</html>
