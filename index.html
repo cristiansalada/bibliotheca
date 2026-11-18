@@ -1636,7 +1636,6 @@ Pautas para sus respuestas:
 3. Si una obra sugerida se halla en estado "Prestado", coméntelo con cortesía.
 4. Redacte en español sereno, formal, elocuente y literario. Use formato Markdown limpio.`;
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${STATE.apiKey}`;
       const payload = {
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents: [
@@ -1649,21 +1648,33 @@ Pautas para sus respuestas:
         generationConfig: { temperature: 0.7, maxOutputTokens: 800 }
       };
 
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      const modelsToTry = ['gemini-3.8-flash', 'gemini-2.5-flash'];
+      let outputText = null;
+      let lastError = null;
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error?.message || `HTTP ${res.status}`);
+      for (const model of modelsToTry) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${STATE.apiKey}`;
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            outputText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (outputText) break;
+          } else {
+            const errJson = await res.json().catch(() => ({}));
+            lastError = new Error(errJson.error?.message || `HTTP ${res.status}`);
+          }
+        } catch (e) {
+          lastError = e;
+        }
       }
 
-      const data = await res.json();
-      const outputText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!outputText) throw new Error("Respuesta vacía");
-
+      if (!outputText) throw (lastError || new Error("No se obtuvo respuesta del asistente"));
       return outputText;
     }
 
