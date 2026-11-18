@@ -516,9 +516,14 @@
           </button>
         </div>
 
+        <div class="flex justify-between items-center text-[9px] text-[#7d654a] serif pt-0.5">
+          <span>¿Prefiere ingresar datos directamente?</span>
+          <button onclick="createBookManuallyDirect('Nuevo Libro')" class="underline font-bold text-[#2d1e13]">Crear en blanco</button>
+        </div>
+
         <!-- Indicador de carga -->
         <div id="smart-search-loading" class="hidden text-center py-4 text-xs serif text-[#7d654a] italic">
-          Buscando en catálogo bibliográfico mundial...
+          Buscando en catálogos bibliográficos mundiales...
         </div>
 
         <!-- Resultados encontrados -->
@@ -554,6 +559,13 @@
             <span id="scan-queue-count">0 códigos</span>
           </div>
           <div id="scan-queue-list" class="space-y-1 max-h-24 overflow-y-auto text-[9px]"></div>
+          
+          <!-- Ingreso manual de ISBN por si la cámara no enfoca -->
+          <div class="flex gap-1 pt-1 border-t border-[#2d1e13]/15">
+            <input type="text" id="manual-isbn-input" onkeydown="if(event.key === 'Enter') addManualIsbnToQueue()" placeholder="O escribir ISBN (ej: 978...)" class="flex-1 bg-white border border-[#2d1e13]/30 rounded px-2 py-1 text-[9px] font-mono">
+            <button onclick="addManualIsbnToQueue()" class="btn-outline px-2 py-1 rounded text-[9px] serif font-bold shrink-0">+ Cola</button>
+          </div>
+
           <button id="batch-save-btn" disabled onclick="processBatchQueue()" class="w-full py-1 btn-solid text-[9px] serif rounded disabled:opacity-40">
             Procesar y Guardar Lote
           </button>
@@ -611,12 +623,11 @@
       document.getElementById('pwa-manifest').setAttribute('href', URL.createObjectURL(blob));
 
       if ('serviceWorker' in navigator) {
-        const sw = `
-          self.addEventListener('install', e => self.skipWaiting());
-          self.addEventListener('activate', e => clients.claim());
-          self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => caches.match(e.request))));
-        `;
-        navigator.serviceWorker.register(URL.createObjectURL(new Blob([sw], { type: 'application/javascript' }))).catch(() => {});
+        navigator.serviceWorker.getRegistrations().then(registrations => {
+          for (let reg of registrations) {
+            reg.unregister();
+          }
+        }).catch(() => {});
       }
     }
 
@@ -1146,7 +1157,7 @@
       }
     }
 
-    // BÚSQUEDA PREDICTIVA POR TÍTULO O AUTOR
+    // BÚSQUEDA PREDICTIVA POR TÍTULO O AUTOR CON MULTICATÁLOGO (OPEN LIBRARY + GOOGLE BOOKS)
     async function executeSmartSearch() {
       const query = document.getElementById('smart-search-input').value.trim();
       if (!query) return;
@@ -1157,61 +1168,149 @@
       loading.classList.remove('hidden');
       resultsContainer.innerHTML = '';
 
+      let candidates = [];
+
+      // 1. Intentar Open Library Search API (sin límites de cuota, rápida con campos seleccionados)
       try {
-        const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=6`;
-        const res = await fetch(url);
-        const data = await res.json();
-        loading.classList.add('hidden');
-
-        if (!data.items || data.items.length === 0) {
-          resultsContainer.innerHTML = `<p class="text-xs text-[#7d654a] serif text-center py-4 italic">No se hallaron coincidencias para "${query}".</p>`;
-          return;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        const olUrl = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=8&fields=title,author_name,first_publish_year,cover_i,isbn,number_of_pages_median,subject`;
+        const res = await fetch(olUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.docs && data.docs.length > 0) {
+            candidates = data.docs.map((doc, idx) => {
+              const isbn = (doc.isbn && doc.isbn[0]) || '';
+              const cover = doc.cover_i 
+                ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` 
+                : (isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg` : '');
+              return {
+                id: 'book-ol-' + Date.now() + '-' + idx,
+                isbn: isbn,
+                title: doc.title || query,
+                author: (doc.author_name && doc.author_name.join(', ')) || 'Autor Desconocido',
+                year: doc.first_publish_year ? String(doc.first_publish_year) : '',
+                pages: doc.number_of_pages_median || 0,
+                cover: cover,
+                synopsis: `Obra clásica catalogada en Open Library.`,
+                genre: (doc.subject && doc.subject[0]) || 'Literatura'
+              };
+            });
+          }
         }
-
-        resultsContainer.innerHTML = data.items.map((item, idx) => {
-          const vol = item.volumeInfo || {};
-          const title = vol.title || 'Sin título';
-          const author = vol.authors ? vol.authors.join(', ') : 'Autor Desconocido';
-          const year = vol.publishedDate ? vol.publishedDate.substring(0, 4) : '';
-          const pages = vol.pageCount || 0;
-          const cover = vol.imageLinks ? (vol.imageLinks.thumbnail || vol.imageLinks.smallThumbnail || '').replace('http:', 'https:') : '';
-          const isbn = vol.industryIdentifiers ? (vol.industryIdentifiers[0]?.identifier || '') : '';
-
-          const encodedBook = encodeURIComponent(JSON.stringify({
-            id: 'book-' + Date.now() + '-' + idx,
-            isbn: isbn,
-            title: title,
-            author: author,
-            year: year,
-            pages: pages,
-            cover: cover,
-            synopsis: vol.description || 'Sin sinopsis disponible.',
-            genre: vol.categories ? vol.categories.join(' / ') : 'Literatura',
-            rating: 0,
-            origin: '',
-            loan: { borrower: '', phone: '' },
-            addedAt: new Date().toISOString()
-          }));
-
-          return `
-            <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 p-2 rounded flex gap-2 items-center justify-between">
-              <img src="${cover || 'data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 40 60\'><rect width=\'40\' height=\'60\' fill=\'%232d1e13\'/></svg>'}" class="w-8 h-12 object-cover rounded shadow shrink-0 bg-[#2d1e13]">
-              <div class="flex-1 min-w-0 pr-1 text-[10px]">
-                <p class="font-bold truncate serif text-[#2d1e13]">${title}</p>
-                <p class="text-[#7d654a] italic text-[9px] truncate">${author} ${year ? '• ' + year : ''}</p>
-                <p class="text-[#7d654a] text-[8px]">${pages > 0 ? `${pages} páginas` : ''}</p>
-              </div>
-              <div class="flex flex-col gap-1 shrink-0">
-                <button onclick="addCandidateToCollection('${encodedBook}', 'Pendiente')" class="btn-solid text-[8px] px-1.5 py-0.5 rounded font-bold">+ Sin leer</button>
-                <button onclick="addCandidateToCollection('${encodedBook}', 'Wishlist')" class="btn-outline text-[8px] px-1.5 py-0.5 rounded font-bold">+ Wishlist</button>
-              </div>
-            </div>
-          `;
-        }).join('');
       } catch (err) {
-        loading.classList.add('hidden');
-        resultsContainer.innerHTML = `<p class="text-xs text-[#7d2929] serif text-center py-2">Error al consultar catálogo. Compruebe su conexión.</p>`;
+        console.warn('Open Library search warning:', err);
       }
+
+      // 2. Si Open Library no devolvió resultados o falló, intentar Google Books como respaldo
+      if (candidates.length === 0) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 3500);
+          const gbUrl = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=6`;
+          const res = await fetch(gbUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.items && data.items.length > 0) {
+              candidates = data.items.map((item, idx) => {
+                const vol = item.volumeInfo || {};
+                const isbn = vol.industryIdentifiers ? (vol.industryIdentifiers[0]?.identifier || '') : '';
+                return {
+                  id: 'book-gb-' + Date.now() + '-' + idx,
+                  isbn: isbn,
+                  title: vol.title || query,
+                  author: vol.authors ? vol.authors.join(', ') : 'Autor Desconocido',
+                  year: vol.publishedDate ? vol.publishedDate.substring(0, 4) : '',
+                  pages: vol.pageCount || 0,
+                  cover: vol.imageLinks ? (vol.imageLinks.thumbnail || '').replace('http:', 'https:') : (isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg` : ''),
+                  synopsis: vol.description || 'Sin sinopsis disponible.',
+                  genre: vol.categories ? vol.categories.join(' / ') : 'Literatura'
+                };
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('Google Books search fallback warning:', err);
+        }
+      }
+
+      loading.classList.add('hidden');
+
+      const cleanQueryEscaped = query.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      const manualOptionHtml = `
+        <div class="pt-2.5 pb-1 border-t border-[#2d1e13]/15 text-center space-y-1.5">
+          <p class="text-[9px] text-[#7d654a] serif">¿Prefiere ingresarlo directamente o con datos personalizados?</p>
+          <button onclick="createBookManuallyDirect('${encodeURIComponent(query)}')" class="btn-outline text-[9px] px-3 py-1.5 rounded font-bold w-full serif">
+            + Añadir "${cleanQueryEscaped}" manualmente
+          </button>
+        </div>
+      `;
+
+      if (candidates.length === 0) {
+        resultsContainer.innerHTML = `
+          <div class="py-3 text-center space-y-2">
+            <p class="text-[11px] text-[#7d654a] serif italic">No se hallaron ediciones automáticas para "${cleanQueryEscaped}".</p>
+            <button onclick="createBookManuallyDirect('${encodeURIComponent(query)}')" class="btn-solid text-xs px-4 py-2 rounded font-bold serif">
+              + Crear libro "${cleanQueryEscaped}" ahora
+            </button>
+          </div>
+        `;
+        return;
+      }
+
+      resultsContainer.innerHTML = candidates.map((book) => {
+        const encodedBook = encodeURIComponent(JSON.stringify({
+          ...book,
+          rating: 0,
+          origin: '',
+          loan: { borrower: '', phone: '' },
+          addedAt: new Date().toISOString()
+        }));
+
+        const fallbackSvg = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 60'><rect width='40' height='60' fill='%232d1e13'/><text x='20' y='36' font-size='20' font-family='serif' fill='%23faf6ee' text-anchor='middle'>B</text></svg>";
+
+        return `
+          <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 p-2 rounded flex gap-2 items-center justify-between shadow-xs">
+            <img src="${book.cover || fallbackSvg}" onerror="this.onerror=null; this.src='${fallbackSvg}'" class="w-9 h-13 object-cover rounded shadow shrink-0 bg-[#2d1e13]">
+            <div class="flex-1 min-w-0 pr-1 text-[10px]">
+              <p class="font-bold truncate serif text-[#2d1e13]">${book.title}</p>
+              <p class="text-[#7d654a] italic text-[9px] truncate">${book.author} ${book.year ? '• ' + book.year : ''}</p>
+              <p class="text-[#7d654a] text-[8px]">${book.pages > 0 ? `${book.pages} páginas` : ''}</p>
+            </div>
+            <div class="flex flex-col gap-1 shrink-0">
+              <button onclick="addCandidateToCollection('${encodedBook}', 'Pendiente')" class="btn-solid text-[8px] px-2 py-1 rounded font-bold">+ Sin leer</button>
+              <button onclick="addCandidateToCollection('${encodedBook}', 'Wishlist')" class="btn-outline text-[8px] px-2 py-1 rounded font-bold">+ Wishlist</button>
+            </div>
+          </div>
+        `;
+      }).join('') + manualOptionHtml;
+    }
+
+    function createBookManuallyDirect(rawQuery) {
+      const title = decodeURIComponent(rawQuery).trim() || 'Nuevo Libro';
+      const newBook = {
+        id: 'book-man-' + Date.now(),
+        isbn: '',
+        title: title,
+        author: 'Autor',
+        year: new Date().getFullYear().toString(),
+        pages: 0,
+        cover: '',
+        synopsis: '',
+        genre: 'Literatura',
+        status: 'Pendiente',
+        rating: 0,
+        origin: '',
+        loan: { borrower: '', phone: '' },
+        addedAt: new Date().toISOString()
+      };
+      STATE.books.unshift(newBook);
+      saveBooks();
+      closeSmartAddModal();
+      openBookModal(newBook.id);
+      showToast(`"${title}" añadido. Modifique sus detalles.`);
     }
 
     function addCandidateToCollection(encodedBook, destinationStatus) {
@@ -1314,53 +1413,175 @@
       }
     }
 
+    function addManualIsbnToQueue() {
+      const input = document.getElementById('manual-isbn-input');
+      if (!input) return;
+      const cleanCode = input.value.replace(/[^0-9X]/gi, '').trim();
+      if (cleanCode.length < 9) {
+        showToast("Ingrese un código ISBN válido (ej: 978...)");
+        return;
+      }
+      if (!STATE.scanQueue.includes(cleanCode)) {
+        STATE.scanQueue.push(cleanCode);
+        saveQueue();
+        input.value = '';
+        renderScanQueue();
+        showToast(`ISBN ${cleanCode} añadido a la cola`);
+      } else {
+        showToast("Ese código ya se encuentra en la cola");
+      }
+    }
+
     function removeFromScanQueue(idx) {
       STATE.scanQueue.splice(idx, 1);
       saveQueue();
     }
 
-    async function processBatchQueue() {
-      if (STATE.scanQueue.length === 0) return;
-      const saveBtn = document.getElementById('batch-save-btn');
-      saveBtn.disabled = true;
-      saveBtn.innerText = "Consultando catálogos...";
+    async function fetchBookMetadataByIsbn(isbn) {
+      // 1. Intentar Open Library Data API (metadatos completos sin límite de cuota)
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const data = await res.json();
+          const item = data[`ISBN:${isbn}`];
+          if (item) {
+            const author = (item.authors && item.authors.length > 0) ? item.authors.map(a => a.name).join(', ') : 'Autor Desconocido';
+            const yearMatch = item.publish_date ? item.publish_date.match(/\d{4}/) : null;
+            const year = yearMatch ? yearMatch[0] : (item.publish_date || '');
+            const pages = item.number_of_pages || 0;
+            const cover = (item.cover && (item.cover.medium || item.cover.large || item.cover.small)) || `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`;
+            const subjects = (item.subjects && item.subjects.length > 0) ? item.subjects.slice(0, 2).map(s => s.name).join(' / ') : 'Literatura';
+            return {
+              title: item.title || `Libro ${isbn}`,
+              author: author,
+              year: year,
+              pages: pages,
+              cover: cover,
+              synopsis: item.notes || (item.excerpts && item.excerpts[0]?.text) || 'Sin sinopsis disponible.',
+              genre: subjects
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('Open Library data lookup warning:', err);
+      }
 
-      const queue = [...STATE.scanQueue];
-      let added = 0;
+      // 2. Intentar Open Library Direct Endpoint por ISBN
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const res = await fetch(`https://openlibrary.org/isbn/${isbn}.json`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
+          const item = await res.json();
+          if (item && item.title) {
+            const yearMatch = item.publish_date ? item.publish_date.match(/\d{4}/) : null;
+            const year = yearMatch ? yearMatch[0] : (item.publish_date || '');
+            const pages = item.number_of_pages || 0;
+            const cover = `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`;
+            const syn = typeof item.description === 'string' ? item.description : (item.description?.value || 'Sin sinopsis disponible.');
+            return {
+              title: item.title,
+              author: 'Autor por catálogo',
+              year: year,
+              pages: pages,
+              cover: cover,
+              synopsis: syn,
+              genre: 'Literatura'
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('Open Library direct lookup warning:', err);
+      }
 
-      for (const isbn of queue) {
-        try {
-          const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+      // 3. Intentar Google Books API como respaldo (con timeout)
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+        const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (res.ok) {
           const data = await res.json();
           if (data.items && data.items.length > 0) {
             const vol = data.items[0].volumeInfo || {};
-            STATE.books.unshift({
-              id: 'isbn-' + isbn + '-' + Date.now(),
-              isbn: isbn,
+            return {
               title: vol.title || `Libro ${isbn}`,
               author: vol.authors ? vol.authors.join(', ') : 'Autor Desconocido',
               year: vol.publishedDate ? vol.publishedDate.substring(0, 4) : '',
               pages: vol.pageCount || 0,
               cover: vol.imageLinks ? (vol.imageLinks.thumbnail || '').replace('http:', 'https:') : `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
               synopsis: vol.description || 'Sin sinopsis disponible.',
-              genre: vol.categories ? vol.categories.join(' / ') : 'Literatura',
-              status: 'Pendiente',
-              rating: 0,
-              origin: '',
-              loan: { borrower: '', phone: '' },
-              addedAt: new Date().toISOString()
-            });
-            added++;
+              genre: vol.categories ? vol.categories.join(' / ') : 'Literatura'
+            };
           }
-        } catch (e) {}
+        }
+      } catch (err) {
+        console.warn('Google Books lookup warning:', err);
       }
 
-      STATE.scanQueue = [];
-      saveQueue();
-      saveBooks();
-      closeSmartAddModal();
-      showToast(`¡${added} libros enriquecidos y catalogados!`);
-      switchTab('shelf');
+      // 4. Fallback garantizado: guardar con ISBN y portada estática para NUNCA perder el ejemplar escaneado
+      return {
+        title: `Ejemplar ISBN ${isbn}`,
+        author: 'Autor por definir',
+        year: '',
+        pages: 0,
+        cover: `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
+        synopsis: 'Ejemplar incorporado mediante lectura de código de barras. Puede editar el título y detalles tocando este libro.',
+        genre: 'General'
+      };
+    }
+
+    async function processBatchQueue() {
+      if (STATE.scanQueue.length === 0) return;
+      const saveBtn = document.getElementById('batch-save-btn');
+      saveBtn.disabled = true;
+
+      const total = STATE.scanQueue.length;
+      let processed = 0;
+
+      try {
+        const queue = [...STATE.scanQueue];
+        for (let i = 0; i < queue.length; i++) {
+          const isbn = queue[i];
+          saveBtn.innerText = `Consultando ${i + 1} de ${total}...`;
+
+          const meta = await fetchBookMetadataByIsbn(isbn);
+          STATE.books.unshift({
+            id: 'book-scan-' + isbn + '-' + Date.now() + '-' + i,
+            isbn: isbn,
+            title: meta.title,
+            author: meta.author,
+            year: meta.year,
+            pages: meta.pages,
+            cover: meta.cover,
+            synopsis: meta.synopsis,
+            genre: meta.genre,
+            status: 'Pendiente',
+            rating: 0,
+            origin: '',
+            loan: { borrower: '', phone: '' },
+            addedAt: new Date().toISOString()
+          });
+          processed++;
+        }
+
+        STATE.scanQueue = [];
+        saveQueue();
+        saveBooks();
+        closeSmartAddModal();
+        showToast(`¡${processed} libros incorporados a su Estantería!`);
+        switchTab('shelf');
+      } catch (err) {
+        console.error('Error procesando cola:', err);
+        showToast("Aviso al procesar cola de escaneo.");
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerText = "Procesar y Guardar Lote";
+      }
     }
 
     // ==========================================
