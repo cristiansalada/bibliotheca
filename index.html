@@ -146,7 +146,7 @@
         </div>
       </div>
 
-      <!-- Buscador & Selector de Vista (Grilla vs Lista) -->
+      <!-- Buscador & Selector de Vista & Selección Múltiple -->
       <div class="flex gap-1.5 items-center">
         <div class="relative flex-1">
           <input type="text" id="shelf-search" oninput="handleSearch(this.value)" placeholder="Buscar por título, autor o género..."
@@ -162,6 +162,10 @@
             <span>Lista</span>
           </button>
         </div>
+        <button onclick="toggleMultiSelectMode()" id="btn-multi-select" class="btn-outline px-2 py-1 rounded text-[9px] serif flex items-center gap-1 shrink-0" title="Selección múltiple para acciones masivas">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3 h-3"><polyline points="9 11 12 14 22 4"></polyline><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+          <span id="btn-multi-select-text">Seleccionar</span>
+        </button>
       </div>
 
       <!-- Filtro por Extensión de Páginas (Sugerencia 1) -->
@@ -346,6 +350,38 @@
     </section>
 
   </main>
+
+  <!-- ========================================== -->
+  <!-- BARRA FLOTANTE DE ACCIONES MASIVAS        -->
+  <!-- ========================================== -->
+  <div id="bulk-action-bar" class="hidden fixed bottom-14 left-2 right-2 md:left-1/4 md:right-1/4 bg-[#2d1e13] text-[#faf6ee] p-2.5 rounded-xl shadow-2xl z-40 border border-[#faf6ee]/20 animate-in fade-in slide-in-from-bottom-3 duration-200">
+    <div class="flex items-center justify-between pb-1.5 border-b border-[#faf6ee]/20 text-[10px] serif">
+      <div class="flex items-center gap-2">
+        <span id="bulk-selected-count" class="font-bold text-[#faf6ee]">0 seleccionados</span>
+        <button onclick="selectAllBooks()" class="text-[#faf6ee]/80 hover:text-white underline text-[9px]">Todos</button>
+        <span class="text-[#faf6ee]/40">•</span>
+        <button onclick="deselectAllBooks()" class="text-[#faf6ee]/80 hover:text-white underline text-[9px]">Ninguno</button>
+      </div>
+      <button onclick="toggleMultiSelectMode(false)" class="text-[#faf6ee]/80 hover:text-white text-[10px] font-bold px-1" title="Cerrar selección">✕</button>
+    </div>
+    <div class="grid grid-cols-5 gap-1 pt-2 text-[9px] serif text-center">
+      <button onclick="bulkSetStatus('Leído')" class="bg-[#faf6ee]/15 hover:bg-[#faf6ee]/25 text-[#faf6ee] py-1 px-0.5 rounded border border-[#faf6ee]/20 transition" title="Marcar como Leído">
+        ✓ Leído
+      </button>
+      <button onclick="bulkSetStatus('Leyendo')" class="bg-[#faf6ee]/15 hover:bg-[#faf6ee]/25 text-[#faf6ee] py-1 px-0.5 rounded border border-[#faf6ee]/20 transition" title="Marcar como Leyendo">
+        Leyendo
+      </button>
+      <button onclick="bulkSetStatus('Pendiente')" class="bg-[#faf6ee]/15 hover:bg-[#faf6ee]/25 text-[#faf6ee] py-1 px-0.5 rounded border border-[#faf6ee]/20 transition" title="Marcar como Sin leer">
+        Sin leer
+      </button>
+      <button onclick="bulkSetStatus('Wishlist')" class="bg-[#faf6ee]/15 hover:bg-[#faf6ee]/25 text-[#faf6ee] py-1 px-0.5 rounded border border-[#faf6ee]/20 transition" title="Mover a Wishlist">
+        Wishlist
+      </button>
+      <button onclick="bulkDeleteSelected()" class="bg-[#7d2929]/80 hover:bg-[#7d2929] text-[#faf6ee] py-1 px-0.5 rounded border border-[#faf6ee]/20 font-bold transition" title="Eliminar seleccionados">
+        ✕ Borrar
+      </button>
+    </div>
+  </div>
 
   <!-- ========================================== -->
   <!-- BARRA INFERIOR (ESTILO MONOCROMÁTICO LIMPIO) -->
@@ -596,7 +632,9 @@
       isScanning: false,
       chatHistory: [],
       lastScannedIsbn: null,
-      lastScannedTime: 0
+      lastScannedTime: 0,
+      multiSelectMode: false,
+      selectedBookIds: new Set()
     };
 
     window.addEventListener('DOMContentLoaded', () => {
@@ -739,8 +777,9 @@
       if (tabId === 'assistant') {
         document.getElementById('assistant-book-count').innerText = `${STATE.books.length} obras`;
       }
-      if (tabId !== 'shelf' && STATE.isScanning) {
-        stopCamera();
+      if (tabId !== 'shelf') {
+        if (STATE.isScanning) stopCamera();
+        if (STATE.multiSelectMode) toggleMultiSelectMode(false);
       }
     }
 
@@ -834,12 +873,8 @@
       document.getElementById('count-wishlist').innerText = wishlist;
     }
 
-    function renderShelf() {
-      const grid = document.getElementById('books-grid');
-      const list = document.getElementById('books-list');
-      const emptyEl = document.getElementById('shelf-empty');
-
-      const filtered = STATE.books.filter(b => {
+    function getFilteredBooks() {
+      return STATE.books.filter(b => {
         // Filtro de texto
         if (STATE.searchQuery) {
           const matchTitle = (b.title || '').toLowerCase().includes(STATE.searchQuery);
@@ -868,11 +903,20 @@
 
         return true;
       });
+    }
+
+    function renderShelf() {
+      const grid = document.getElementById('books-grid');
+      const list = document.getElementById('books-list');
+      const emptyEl = document.getElementById('shelf-empty');
+
+      const filtered = getFilteredBooks();
 
       if (STATE.books.length === 0) {
         grid.innerHTML = '';
         list.innerHTML = '';
         emptyEl.classList.remove('hidden');
+        if (STATE.multiSelectMode) toggleMultiSelectMode(false);
         return;
       }
 
@@ -897,11 +941,27 @@
           <img src="${coverSrc}" alt="${b.title}" onerror="this.onerror=null; this.src='${fallbackCover}'" class="w-full h-44 object-cover rounded book-spine">
         `;
 
+        const isSelected = STATE.selectedBookIds.has(b.id);
+        const cardBorderCls = isSelected 
+          ? 'border-2 border-[#2d1e13] bg-[#e8dcce] ring-2 ring-[#2d1e13]/25 shadow-md' 
+          : 'border border-[#2d1e13]/25 bg-[#f3ebd9] hover:border-[#2d1e13]';
+
+        const clickAction = STATE.multiSelectMode 
+          ? `toggleBookSelection('${b.id}', event)` 
+          : `openBookModal('${b.id}')`;
+
+        const checkboxHtml = STATE.multiSelectMode ? `
+          <div onclick="toggleBookSelection('${b.id}', event)" class="absolute top-1.5 left-1.5 z-20 w-5 h-5 rounded flex items-center justify-center cursor-pointer transition shadow ${isSelected ? 'bg-[#2d1e13] text-[#faf6ee]' : 'bg-[#faf6ee] border border-[#2d1e13] text-transparent hover:border-[#2d1e13]'}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" class="w-3.5 h-3.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          </div>
+        ` : '';
+
         return `
-          <div onclick="openBookModal('${b.id}')" class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-2 cursor-pointer hover:border-[#2d1e13] transition shadow-sm flex flex-col justify-between">
+          <div onclick="${clickAction}" class="${cardBorderCls} rounded p-2 cursor-pointer transition shadow-sm flex flex-col justify-between relative select-none">
             <div class="relative rounded overflow-hidden mb-1.5 book-shadow aspect-[2/3] bg-[#2d1e13]">
+              ${checkboxHtml}
               ${coverHtml}
-              <span class="absolute top-1 right-1 bg-[#2d1e13] text-[#faf6ee] text-[8px] px-1 py-0.5 rounded serif">
+              <span class="absolute top-1 right-1 bg-[#2d1e13] text-[#faf6ee] text-[8px] px-1 py-0.5 rounded serif z-10">
                 ${b.status}
               </span>
             </div>
@@ -923,18 +983,137 @@
         const estHours = pages > 0 ? `(~${Math.round((pages / 50) * 10) / 10} hs)` : '';
         const stars = generateStarsDisplay(b.rating || 0);
 
+        const isSelected = STATE.selectedBookIds.has(b.id);
+        const cardBorderCls = isSelected 
+          ? 'border-2 border-[#2d1e13] bg-[#e8dcce] ring-2 ring-[#2d1e13]/25 shadow-md' 
+          : 'border border-[#2d1e13]/25 bg-[#f3ebd9] hover:border-[#2d1e13]';
+
+        const clickAction = STATE.multiSelectMode 
+          ? `toggleBookSelection('${b.id}', event)` 
+          : `openBookModal('${b.id}')`;
+
+        const checkboxHtml = STATE.multiSelectMode ? `
+          <div onclick="toggleBookSelection('${b.id}', event)" class="mr-2 w-4 h-4 rounded flex items-center justify-center cursor-pointer shrink-0 transition ${isSelected ? 'bg-[#2d1e13] text-[#faf6ee]' : 'bg-[#faf6ee] border border-[#2d1e13] text-transparent'}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" class="w-3 h-3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          </div>
+        ` : '';
+
         return `
-          <div onclick="openBookModal('${b.id}')" class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-2 flex items-center justify-between cursor-pointer hover:border-[#2d1e13] transition shadow-xs">
-            <div class="min-w-0 pr-2">
-              <h4 class="font-bold text-[11px] text-[#2d1e13] truncate serif">${b.title}</h4>
-              <p class="text-[9px] text-[#7d654a] truncate italic">
-                ${b.author} • ${pages > 0 ? `${pages} págs ${estHours}` : b.year} ${stars ? '• ' + stars : ''}
-              </p>
+          <div onclick="${clickAction}" class="${cardBorderCls} rounded p-2 flex items-center justify-between cursor-pointer transition shadow-xs select-none">
+            <div class="flex items-center min-w-0 pr-2">
+              ${checkboxHtml}
+              <div class="min-w-0">
+                <h4 class="font-bold text-[11px] text-[#2d1e13] truncate serif">${b.title}</h4>
+                <p class="text-[9px] text-[#7d654a] truncate italic">
+                  ${b.author} • ${pages > 0 ? `${pages} págs ${estHours}` : b.year} ${stars ? '• ' + stars : ''}
+                </p>
+              </div>
             </div>
             <span class="shrink-0 text-[8px] border border-[#2d1e13] px-1.5 py-0.5 rounded serif">${b.status}</span>
           </div>
         `;
       }).join('');
+    }
+
+    // ==========================================
+    // GESTIÓN DE SELECCIÓN MÚLTIPLE & ACCIONES MASIVAS
+    // ==========================================
+    function toggleMultiSelectMode(forceState) {
+      STATE.multiSelectMode = (forceState !== undefined) ? forceState : !STATE.multiSelectMode;
+      if (!STATE.multiSelectMode) {
+        STATE.selectedBookIds.clear();
+      }
+      updateMultiSelectUI();
+      renderShelf();
+    }
+
+    function updateMultiSelectUI() {
+      const btn = document.getElementById('btn-multi-select');
+      const btnText = document.getElementById('btn-multi-select-text');
+      const bar = document.getElementById('bulk-action-bar');
+      const countEl = document.getElementById('bulk-selected-count');
+
+      if (!btn || !bar) return;
+
+      if (STATE.multiSelectMode) {
+        btn.className = "btn-solid px-2 py-1 rounded text-[9px] serif flex items-center gap-1 shrink-0";
+        if (btnText) btnText.innerText = "Cancelar";
+        bar.classList.remove('hidden');
+        if (countEl) countEl.innerText = `${STATE.selectedBookIds.size} seleccionados`;
+      } else {
+        btn.className = "btn-outline px-2 py-1 rounded text-[9px] serif flex items-center gap-1 shrink-0";
+        if (btnText) btnText.innerText = "Seleccionar";
+        bar.classList.add('hidden');
+      }
+    }
+
+    function toggleBookSelection(bookId, event) {
+      if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+      }
+      if (STATE.selectedBookIds.has(bookId)) {
+        STATE.selectedBookIds.delete(bookId);
+      } else {
+        STATE.selectedBookIds.add(bookId);
+      }
+      updateMultiSelectUI();
+      renderShelf();
+    }
+
+    function selectAllBooks() {
+      const filtered = getFilteredBooks();
+      filtered.forEach(b => STATE.selectedBookIds.add(b.id));
+      updateMultiSelectUI();
+      renderShelf();
+    }
+
+    function deselectAllBooks() {
+      STATE.selectedBookIds.clear();
+      updateMultiSelectUI();
+      renderShelf();
+    }
+
+    function bulkSetStatus(newStatus) {
+      if (STATE.selectedBookIds.size === 0) {
+        showToast("Seleccione al menos un libro");
+        return;
+      }
+
+      let updatedCount = 0;
+      STATE.books.forEach(b => {
+        if (STATE.selectedBookIds.has(b.id)) {
+          b.status = newStatus;
+          if (newStatus === 'Leído' && !b.readDate) {
+            b.readDate = new Date().toISOString();
+          }
+          updatedCount++;
+        }
+      });
+
+      saveBooks();
+      showToast(`${updatedCount} libros marcados como "${newStatus}"`);
+      toggleMultiSelectMode(false);
+    }
+
+    function bulkDeleteSelected() {
+      if (STATE.selectedBookIds.size === 0) {
+        showToast("Seleccione al menos un libro para eliminar");
+        return;
+      }
+
+      const count = STATE.selectedBookIds.size;
+      const msg = count === 1 
+        ? "¿Desea retirar esta obra seleccionada de su biblioteca?" 
+        : `¿Desea retirar estas ${count} obras seleccionadas de su biblioteca?`;
+
+      if (!confirm(msg)) return;
+
+      STATE.books = STATE.books.filter(b => !STATE.selectedBookIds.has(b.id));
+      STATE.selectedBookIds.clear();
+      saveBooks();
+      showToast(`${count} ${count === 1 ? 'obra retirada' : 'obras retiradas'} del catálogo`);
+      toggleMultiSelectMode(false);
     }
 
     // GENERADOR DE PORTADA CLÁSICA EDITORIAL (FONDO CUERO + BORDES DORADOS + TIPOGRAFÍA SERIF)
@@ -1029,9 +1208,7 @@
       const book = STATE.books.find(b => b.id === STATE.selectedBookId);
       if (book) {
         book.rating = stars;
-        saveToStorage();
-        renderBooks();
-        renderStats();
+        saveBooks();
         showToast(stars > 0 ? `Calificación: ${stars} estrellas` : 'Calificación removida');
       }
     }
@@ -1058,9 +1235,7 @@
           book.readDate = new Date().toISOString();
         }
         updateModalStatusUI(newStatus);
-        saveToStorage();
-        renderBooks();
-        renderStats();
+        saveBooks();
         showToast(`Estado cambiado a "${newStatus}"`);
       }
     }
@@ -1469,6 +1644,36 @@
       saveQueue();
     }
 
+    // ==========================================
+    // CLIENTE GEMINI 3.8 FLASH ULTRA-RÁPIDO & RESILIENTE
+    // ==========================================
+    async function callGemini(payload) {
+      if (!STATE.apiKey) throw new Error("No hay clave de API configurada");
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${STATE.apiKey}`;
+
+      // Asegurar que no se envíen parámetros de thinking incompatibles
+      const cleanPayload = JSON.parse(JSON.stringify(payload));
+      if (cleanPayload.generationConfig && cleanPayload.generationConfig.thinkingConfig) {
+        delete cleanPayload.generationConfig.thinkingConfig;
+      }
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cleanPayload)
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error?.message || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error("El modelo no devolvió contenido");
+      return text;
+    }
+
     // IDENTIFICADOR INTELIGENTE DE LIBROS MEDIANTE GEMINI (RESPALDO INFALIBLE PARA EDICIONES EN ESPAÑOL)
     async function identifyBookWithGemini(queryOrIsbn, isIsbn = true) {
       if (!STATE.apiKey) return null;
@@ -1502,25 +1707,15 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 0.1,
-          maxOutputTokens: 800,
-          thinkingConfig: { thinkingBudget: 0 }
+          maxOutputTokens: 800
         }
       };
 
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${STATE.apiKey}`;
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-
-        if (!res.ok) return null;
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!text) return null;
-
-        const cleanJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const text = await callGemini(payload);
+        let cleanJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const jsonMatch = cleanJson.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+        if (jsonMatch) cleanJson = jsonMatch[0];
         return JSON.parse(cleanJson);
       } catch (err) {
         console.warn("Aviso al consultar Gemini para libro:", err);
@@ -1531,58 +1726,62 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
     async function fetchBookMetadataByIsbn(isbn) {
       let result = null;
 
-      // 1. Intentar Open Library Data API (rápido)
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3500);
-        const res = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (res.ok) {
-          const data = await res.json();
-          const item = data[`ISBN:${isbn}`];
-          if (item && item.title) {
-            const author = (item.authors && item.authors.length > 0) ? item.authors.map(a => a.name).join(', ') : 'Autor Desconocido';
-            const yearMatch = item.publish_date ? item.publish_date.match(/\d{4}/) : null;
-            const year = yearMatch ? yearMatch[0] : (item.publish_date || '');
-            const pages = item.number_of_pages || 0;
-            const cover = (item.cover && (item.cover.medium || item.cover.large || item.cover.small)) || '';
-            const subjects = (item.subjects && item.subjects.length > 0) ? item.subjects.slice(0, 2).map(s => s.name).join(' / ') : 'Literatura';
-            result = {
-              title: item.title,
-              author: author,
-              year: year,
-              pages: pages,
-              cover: cover,
-              synopsis: item.notes || (item.excerpts && item.excerpts[0]?.text) || '',
-              genre: subjects
-            };
-          }
-        }
-      } catch (err) {}
-
-      // 2. Si no se encontró en Open Library o no tiene sinopsis completa, y tenemos Gemini: ¡Gemini lo identifica!
-      if ((!result || !result.title || !result.synopsis || result.synopsis.length < 20) && STATE.apiKey) {
+      // 1. Si disponemos de Gemini, consultar prioritariamente (cobertura 100% de literatura y ediciones en español)
+      if (STATE.apiKey) {
         try {
           const aiData = await identifyBookWithGemini(isbn, true);
           if (aiData && aiData.title && !aiData.error) {
             result = {
               title: aiData.title,
-              author: aiData.author || (result && result.author) || 'Autor Desconocido',
-              year: aiData.year || (result && result.year) || '',
-              pages: aiData.pages || (result && result.pages) || 0,
-              cover: (result && result.cover) || `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
-              synopsis: aiData.synopsis || (result && result.synopsis) || 'Sin sinopsis disponible.',
-              genre: aiData.genre || (result && result.genre) || 'Literatura'
+              author: aiData.author || 'Autor Desconocido',
+              year: aiData.year || '',
+              pages: aiData.pages || 0,
+              cover: `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
+              synopsis: aiData.synopsis || 'Sin sinopsis disponible.',
+              genre: aiData.genre || 'Literatura'
             };
+          }
+        } catch (err) {
+          console.warn("Aviso al resolver con Gemini:", err);
+        }
+      }
+
+      // 2. Si no hubo resultado o no hay clave, intentar Open Library Data API
+      if (!result || !result.title) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2500);
+          const res = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (res.ok) {
+            const data = await res.json();
+            const item = data[`ISBN:${isbn}`];
+            if (item && item.title) {
+              const author = (item.authors && item.authors.length > 0) ? item.authors.map(a => a.name).join(', ') : 'Autor Desconocido';
+              const yearMatch = item.publish_date ? item.publish_date.match(/\d{4}/) : null;
+              const year = yearMatch ? yearMatch[0] : (item.publish_date || '');
+              const pages = item.number_of_pages || 0;
+              const cover = (item.cover && (item.cover.medium || item.cover.large || item.cover.small)) || '';
+              const subjects = (item.subjects && item.subjects.length > 0) ? item.subjects.slice(0, 2).map(s => s.name).join(' / ') : 'Literatura';
+              result = {
+                title: item.title,
+                author: author,
+                year: year,
+                pages: pages,
+                cover: cover,
+                synopsis: item.notes || (item.excerpts && item.excerpts[0]?.text) || '',
+                genre: subjects
+              };
+            }
           }
         } catch (err) {}
       }
 
-      // 3. Respaldo directo de Open Library por ISBN
-      if (!result) {
+      // 3. Fallback directo de Open Library por ISBN
+      if (!result || !result.title) {
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2500);
+          const timeoutId = setTimeout(() => controller.abort(), 2000);
           const res = await fetch(`https://openlibrary.org/isbn/${isbn}.json`, { signal: controller.signal });
           clearTimeout(timeoutId);
           if (res.ok) {
@@ -1630,16 +1829,13 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
       saveBtn.disabled = true;
 
       const total = STATE.scanQueue.length;
-      let processed = 0;
+      saveBtn.innerText = `Consultando ${total} libros en paralelo...`;
 
       try {
         const queue = [...STATE.scanQueue];
-        for (let i = 0; i < queue.length; i++) {
-          const isbn = queue[i];
-          saveBtn.innerText = `Consultando ${i + 1} de ${total}...`;
-
+        const results = await Promise.all(queue.map(async (isbn, i) => {
           const meta = await fetchBookMetadataByIsbn(isbn);
-          STATE.books.unshift({
+          return {
             id: 'book-scan-' + isbn + '-' + Date.now() + '-' + i,
             isbn: isbn,
             title: meta.title,
@@ -1654,15 +1850,16 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
             origin: '',
             loan: { borrower: '', phone: '' },
             addedAt: new Date().toISOString()
-          });
-          processed++;
-        }
+          };
+        }));
+
+        results.forEach(book => STATE.books.unshift(book));
 
         STATE.scanQueue = [];
         saveQueue();
         saveBooks();
         closeSmartAddModal();
-        showToast(`¡${processed} libros incorporados a su Estantería!`);
+        showToast(`¡${results.length} libros incorporados a su Estantería!`);
         switchTab('shelf');
       } catch (err) {
         console.error('Error procesando cola:', err);
@@ -1736,38 +1933,11 @@ Pautas para sus respuestas:
         ],
         generationConfig: {
           temperature: 0.7,
-          maxOutputTokens: 800,
-          thinkingConfig: { thinkingBudget: 0 }
+          maxOutputTokens: 800
         }
       };
 
-      const modelsToTry = ['gemini-3.8-flash', 'gemini-2.5-flash'];
-      let outputText = null;
-      let lastError = null;
-
-      for (const model of modelsToTry) {
-        try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${STATE.apiKey}`;
-          const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            outputText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (outputText) break;
-          } else {
-            const errJson = await res.json().catch(() => ({}));
-            lastError = new Error(errJson.error?.message || `HTTP ${res.status}`);
-          }
-        } catch (e) {
-          lastError = e;
-        }
-      }
-
-      if (!outputText) throw (lastError || new Error("No se obtuvo respuesta del asistente"));
+      const outputText = await callGemini(payload);
       return outputText;
     }
 
