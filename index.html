@@ -891,16 +891,10 @@
         const estHours = pages > 0 ? `~${Math.round((pages / 50) * 10) / 10} hs` : '';
         const stars = generateStarsDisplay(b.rating || 0);
 
-        const coverHtml = b.cover ? `
-          <img src="${b.cover}" alt="${b.title}" onerror="this.onerror=null; this.src='https://covers.openlibrary.org/b/isbn/${b.isbn}-M.jpg'" class="w-full h-44 object-cover rounded book-spine">
-        ` : `
-          <div class="w-full h-44 rounded bg-[#2d1e13] border border-[#2d1e13] p-3 flex flex-col justify-between text-[#faf6ee] book-spine">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="w-5 h-5 text-[#faf6ee]/70"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
-            <div>
-              <p class="font-bold text-xs serif line-clamp-3">${b.title}</p>
-              <p class="text-[9px] text-[#faf6ee]/70 truncate mt-1 italic">${b.author}</p>
-            </div>
-          </div>
+        const fallbackCover = generateClassicalCoverSvg(b.title, b.author);
+        const coverSrc = b.cover || fallbackCover;
+        const coverHtml = `
+          <img src="${coverSrc}" alt="${b.title}" onerror="this.onerror=null; this.src='${fallbackCover}'" class="w-full h-44 object-cover rounded book-spine">
         `;
 
         return `
@@ -943,6 +937,48 @@
       }).join('');
     }
 
+    // GENERADOR DE PORTADA CLÁSICA EDITORIAL (FONDO CUERO + BORDES DORADOS + TIPOGRAFÍA SERIF)
+    function generateClassicalCoverSvg(title, author) {
+      const cleanTitle = (title || 'Libro').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const cleanAuthor = (author || 'Autor').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      
+      const words = cleanTitle.split(' ');
+      let l1 = '', l2 = '', l3 = '';
+      if (words.length <= 3) {
+        l1 = cleanTitle;
+      } else if (words.length <= 6) {
+        const mid = Math.ceil(words.length / 2);
+        l1 = words.slice(0, mid).join(' ');
+        l2 = words.slice(mid).join(' ');
+      } else {
+        l1 = words.slice(0, 3).join(' ');
+        l2 = words.slice(3, 6).join(' ');
+        l3 = words.slice(6, 9).join(' ') + (words.length > 9 ? '...' : '');
+      }
+
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 240" width="100%" height="100%">
+        <defs>
+          <linearGradient id="covGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#3a2517" />
+            <stop offset="100%" stop-color="#1c1008" />
+          </linearGradient>
+        </defs>
+        <rect width="160" height="240" rx="4" fill="url(#covGrad)" />
+        <rect x="8" y="8" width="144" height="224" rx="2" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.75" />
+        <rect x="11" y="11" width="138" height="218" rx="1" fill="none" stroke="#d4af37" stroke-width="0.5" stroke-dasharray="2,2" opacity="0.6" />
+        <rect x="0" y="0" width="7" height="240" fill="#000" opacity="0.35" />
+        <line x1="7" y1="0" x2="7" y2="240" stroke="#d4af37" stroke-width="0.5" opacity="0.3" />
+        <text x="80" y="38" font-family="Georgia, serif" font-size="8" fill="#d4af37" text-anchor="middle" letter-spacing="2" opacity="0.85">BIBLIOTHECA</text>
+        <line x1="45" y1="44" x2="115" y2="44" stroke="#d4af37" stroke-width="0.8" opacity="0.5" />
+        <text x="80" y="88" font-family="Georgia, serif" font-size="11" font-weight="bold" fill="#faf6ee" text-anchor="middle">${l1}</text>
+        ${l2 ? `<text x="80" y="104" font-family="Georgia, serif" font-size="10" font-weight="bold" fill="#faf6ee" text-anchor="middle">${l2}</text>` : ''}
+        ${l3 ? `<text x="80" y="120" font-family="Georgia, serif" font-size="9" font-weight="bold" fill="#faf6ee" text-anchor="middle">${l3}</text>` : ''}
+        <text x="80" y="182" font-family="Georgia, serif" font-style="italic" font-size="9" fill="#d4af37" text-anchor="middle">${cleanAuthor}</text>
+      </svg>`;
+
+      return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+    }
+
     function generateStarsDisplay(rating) {
       if (!rating || rating === 0) return '';
       return '★'.repeat(rating) + '☆'.repeat(5 - rating);
@@ -967,7 +1003,9 @@
       document.getElementById('modal-pages-estimate').innerText = pages > 0 ? `${pages} páginas • ~${hours} horas de lectura` : `Año: ${book.year || 'N/A'}`;
 
       const coverImg = document.getElementById('modal-cover');
-      coverImg.src = book.cover || `https://covers.openlibrary.org/b/isbn/${book.isbn}-M.jpg`;
+      const fallbackCover = generateClassicalCoverSvg(book.title, book.author);
+      coverImg.src = book.cover || fallbackCover;
+      coverImg.onerror = () => { coverImg.src = fallbackCover; };
       document.getElementById('modal-cover-input').value = book.cover || '';
 
       document.getElementById('modal-loan-name').value = (book.loan && book.loan.borrower) || '';
@@ -1203,36 +1241,30 @@
         console.warn('Open Library search warning:', err);
       }
 
-      // 2. Si Open Library no devolvió resultados o falló, intentar Google Books como respaldo
-      if (candidates.length === 0) {
+      // 2. Si no hubo resultados y tenemos API Key de Gemini: ¡Consultar a Gemini!
+      if (candidates.length === 0 && STATE.apiKey) {
         try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 3500);
-          const gbUrl = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=6`;
-          const res = await fetch(gbUrl, { signal: controller.signal });
-          clearTimeout(timeoutId);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.items && data.items.length > 0) {
-              candidates = data.items.map((item, idx) => {
-                const vol = item.volumeInfo || {};
-                const isbn = vol.industryIdentifiers ? (vol.industryIdentifiers[0]?.identifier || '') : '';
-                return {
-                  id: 'book-gb-' + Date.now() + '-' + idx,
-                  isbn: isbn,
-                  title: vol.title || query,
-                  author: vol.authors ? vol.authors.join(', ') : 'Autor Desconocido',
-                  year: vol.publishedDate ? vol.publishedDate.substring(0, 4) : '',
-                  pages: vol.pageCount || 0,
-                  cover: vol.imageLinks ? (vol.imageLinks.thumbnail || '').replace('http:', 'https:') : (isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg` : ''),
-                  synopsis: vol.description || 'Sin sinopsis disponible.',
-                  genre: vol.categories ? vol.categories.join(' / ') : 'Literatura'
-                };
-              });
-            }
+          const aiCandidates = await identifyBookWithGemini(query, false);
+          if (Array.isArray(aiCandidates) && aiCandidates.length > 0) {
+            candidates = aiCandidates.map((b, idx) => {
+              const isbn = b.isbn || '';
+              const fallbackCov = generateClassicalCoverSvg(b.title || query, b.author || 'Autor');
+              const cover = isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg` : fallbackCov;
+              return {
+                id: 'book-ai-' + Date.now() + '-' + idx,
+                isbn: isbn,
+                title: b.title || query,
+                author: b.author || 'Autor Desconocido',
+                year: b.year || '',
+                pages: b.pages || 0,
+                cover: cover,
+                synopsis: b.synopsis || 'Sin sinopsis disponible.',
+                genre: b.genre || 'Literatura'
+              };
+            });
           }
-        } catch (err) {
-          console.warn('Google Books search fallback warning:', err);
+        } catch (e) {
+          console.warn('Gemini search warning:', e);
         }
       }
 
@@ -1269,11 +1301,11 @@
           addedAt: new Date().toISOString()
         }));
 
-        const fallbackSvg = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 60'><rect width='40' height='60' fill='%232d1e13'/><text x='20' y='36' font-size='20' font-family='serif' fill='%23faf6ee' text-anchor='middle'>B</text></svg>";
+        const fallbackCover = generateClassicalCoverSvg(book.title, book.author);
 
         return `
           <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 p-2 rounded flex gap-2 items-center justify-between shadow-xs">
-            <img src="${book.cover || fallbackSvg}" onerror="this.onerror=null; this.src='${fallbackSvg}'" class="w-9 h-13 object-cover rounded shadow shrink-0 bg-[#2d1e13]">
+            <img src="${book.cover || fallbackCover}" onerror="this.onerror=null; this.src='${fallbackCover}'" class="w-9 h-13 object-cover rounded shadow shrink-0 bg-[#2d1e13]">
             <div class="flex-1 min-w-0 pr-1 text-[10px]">
               <p class="font-bold truncate serif text-[#2d1e13]">${book.title}</p>
               <p class="text-[#7d654a] italic text-[9px] truncate">${book.author} ${book.year ? '• ' + book.year : ''}</p>
@@ -1437,102 +1469,159 @@
       saveQueue();
     }
 
+    // IDENTIFICADOR INTELIGENTE DE LIBROS MEDIANTE GEMINI (RESPALDO INFALIBLE PARA EDICIONES EN ESPAÑOL)
+    async function identifyBookWithGemini(queryOrIsbn, isIsbn = true) {
+      if (!STATE.apiKey) return null;
+
+      const prompt = isIsbn
+        ? `Eres un bibliotecario profesional y experto en catálogos editoriales en español. Identifica con exactitud la obra literaria correspondiente a este código ISBN: "${queryOrIsbn}".
+Devuelve ÚNICAMENTE un objeto JSON válido (sin formato markdown ni texto extra) con las claves:
+{
+  "title": "Título oficial de la obra en español",
+  "author": "Nombre del autor o autores",
+  "year": "Año de publicación o edición (4 dígitos)",
+  "pages": 0,
+  "genre": "Género o materia literaria (ej: Novela, Humor, Ensayo, Ficción)",
+  "synopsis": "Resumen argumental claro y detallado de 2 a 4 oraciones en español."
+}`
+        : `Eres un bibliotecario profesional y experto en literatura en español. Identifica las obras o posibles ediciones más reconocidas para la búsqueda: "${queryOrIsbn}".
+Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato markdown ni texto extra):
+[
+  {
+    "title": "Título de la obra",
+    "author": "Nombre del autor",
+    "year": "Año (4 dígitos)",
+    "pages": 0,
+    "genre": "Género",
+    "synopsis": "Resumen argumental breve de 2 oraciones en español.",
+    "isbn": "ISBN-13 si se conoce o cadena vacía"
+  }
+]`;
+
+      const payload = {
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 800,
+          thinkingConfig: { thinkingBudget: 0 }
+        }
+      };
+
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${STATE.apiKey}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) return null;
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!text) return null;
+
+        const cleanJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+        return JSON.parse(cleanJson);
+      } catch (err) {
+        console.warn("Aviso al consultar Gemini para libro:", err);
+        return null;
+      }
+    }
+
     async function fetchBookMetadataByIsbn(isbn) {
-      // 1. Intentar Open Library Data API (metadatos completos sin límite de cuota)
+      let result = null;
+
+      // 1. Intentar Open Library Data API (rápido)
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
         const res = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`, { signal: controller.signal });
         clearTimeout(timeoutId);
         if (res.ok) {
           const data = await res.json();
           const item = data[`ISBN:${isbn}`];
-          if (item) {
+          if (item && item.title) {
             const author = (item.authors && item.authors.length > 0) ? item.authors.map(a => a.name).join(', ') : 'Autor Desconocido';
             const yearMatch = item.publish_date ? item.publish_date.match(/\d{4}/) : null;
             const year = yearMatch ? yearMatch[0] : (item.publish_date || '');
             const pages = item.number_of_pages || 0;
-            const cover = (item.cover && (item.cover.medium || item.cover.large || item.cover.small)) || `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`;
+            const cover = (item.cover && (item.cover.medium || item.cover.large || item.cover.small)) || '';
             const subjects = (item.subjects && item.subjects.length > 0) ? item.subjects.slice(0, 2).map(s => s.name).join(' / ') : 'Literatura';
-            return {
-              title: item.title || `Libro ${isbn}`,
+            result = {
+              title: item.title,
               author: author,
               year: year,
               pages: pages,
               cover: cover,
-              synopsis: item.notes || (item.excerpts && item.excerpts[0]?.text) || 'Sin sinopsis disponible.',
+              synopsis: item.notes || (item.excerpts && item.excerpts[0]?.text) || '',
               genre: subjects
             };
           }
         }
-      } catch (err) {
-        console.warn('Open Library data lookup warning:', err);
-      }
+      } catch (err) {}
 
-      // 2. Intentar Open Library Direct Endpoint por ISBN
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000);
-        const res = await fetch(`https://openlibrary.org/isbn/${isbn}.json`, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (res.ok) {
-          const item = await res.json();
-          if (item && item.title) {
-            const yearMatch = item.publish_date ? item.publish_date.match(/\d{4}/) : null;
-            const year = yearMatch ? yearMatch[0] : (item.publish_date || '');
-            const pages = item.number_of_pages || 0;
-            const cover = `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`;
-            const syn = typeof item.description === 'string' ? item.description : (item.description?.value || 'Sin sinopsis disponible.');
-            return {
-              title: item.title,
-              author: 'Autor por catálogo',
-              year: year,
-              pages: pages,
-              cover: cover,
-              synopsis: syn,
-              genre: 'Literatura'
+      // 2. Si no se encontró en Open Library o no tiene sinopsis completa, y tenemos Gemini: ¡Gemini lo identifica!
+      if ((!result || !result.title || !result.synopsis || result.synopsis.length < 20) && STATE.apiKey) {
+        try {
+          const aiData = await identifyBookWithGemini(isbn, true);
+          if (aiData && aiData.title && !aiData.error) {
+            result = {
+              title: aiData.title,
+              author: aiData.author || (result && result.author) || 'Autor Desconocido',
+              year: aiData.year || (result && result.year) || '',
+              pages: aiData.pages || (result && result.pages) || 0,
+              cover: (result && result.cover) || `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
+              synopsis: aiData.synopsis || (result && result.synopsis) || 'Sin sinopsis disponible.',
+              genre: aiData.genre || (result && result.genre) || 'Literatura'
             };
           }
-        }
-      } catch (err) {
-        console.warn('Open Library direct lookup warning:', err);
+        } catch (err) {}
       }
 
-      // 3. Intentar Google Books API como respaldo (con timeout)
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3500);
-        const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.items && data.items.length > 0) {
-            const vol = data.items[0].volumeInfo || {};
-            return {
-              title: vol.title || `Libro ${isbn}`,
-              author: vol.authors ? vol.authors.join(', ') : 'Autor Desconocido',
-              year: vol.publishedDate ? vol.publishedDate.substring(0, 4) : '',
-              pages: vol.pageCount || 0,
-              cover: vol.imageLinks ? (vol.imageLinks.thumbnail || '').replace('http:', 'https:') : `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
-              synopsis: vol.description || 'Sin sinopsis disponible.',
-              genre: vol.categories ? vol.categories.join(' / ') : 'Literatura'
-            };
+      // 3. Respaldo directo de Open Library por ISBN
+      if (!result) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2500);
+          const res = await fetch(`https://openlibrary.org/isbn/${isbn}.json`, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (res.ok) {
+            const item = await res.json();
+            if (item && item.title) {
+              const yearMatch = item.publish_date ? item.publish_date.match(/\d{4}/) : null;
+              result = {
+                title: item.title,
+                author: 'Autor por catálogo',
+                year: yearMatch ? yearMatch[0] : (item.publish_date || ''),
+                pages: item.number_of_pages || 0,
+                cover: `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
+                synopsis: typeof item.description === 'string' ? item.description : (item.description?.value || ''),
+                genre: 'Literatura'
+              };
+            }
           }
-        }
-      } catch (err) {
-        console.warn('Google Books lookup warning:', err);
+        } catch (err) {}
       }
 
-      // 4. Fallback garantizado: guardar con ISBN y portada estática para NUNCA perder el ejemplar escaneado
-      return {
-        title: `Ejemplar ISBN ${isbn}`,
-        author: 'Autor por definir',
-        year: '',
-        pages: 0,
-        cover: `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
-        synopsis: 'Ejemplar incorporado mediante lectura de código de barras. Puede editar el título y detalles tocando este libro.',
-        genre: 'General'
-      };
+      // 4. Fallback garantizado si ningún catálogo devolvió título
+      if (!result || !result.title) {
+        result = {
+          title: `Ejemplar ISBN ${isbn}`,
+          author: 'Autor por definir',
+          year: '',
+          pages: 0,
+          cover: '',
+          synopsis: 'Ejemplar incorporado mediante lectura de código de barras. Puede editar el título y detalles tocando este libro.',
+          genre: 'General'
+        };
+      }
+
+      // Portada elegante garantizada: Si no hay portada en línea, generar portada clásica encuadernada
+      if (!result.cover) {
+        result.cover = generateClassicalCoverSvg(result.title, result.author);
+      }
+
+      return result;
     }
 
     async function processBatchQueue() {
@@ -1645,7 +1734,11 @@ Pautas para sus respuestas:
           })),
           { role: 'user', parts: [{ text: userMessage }] }
         ],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 800 }
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 800,
+          thinkingConfig: { thinkingBudget: 0 }
+        }
       };
 
       const modelsToTry = ['gemini-3.8-flash', 'gemini-2.5-flash'];
