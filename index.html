@@ -344,7 +344,9 @@
           <input type="password" id="gemini-api-key-input" placeholder="Pegue aquí su clave (AIzaSy...)"
                  class="flex-1 bg-white border border-[#2d1e13]/30 rounded px-2 py-1 text-[10px] font-mono text-[#2d1e13]">
           <button onclick="saveApiKey()" class="btn-solid px-3 py-1 rounded text-[10px] serif">Guardar</button>
+          <button onclick="testGeminiConnection()" class="btn-outline px-2.5 py-1 rounded text-[10px] serif font-bold">Probar</button>
         </div>
+        <p id="gemini-test-result" class="text-[9px] serif italic hidden"></p>
       </div>
 
     </section>
@@ -1383,40 +1385,84 @@
 
       let candidates = [];
 
-      // 1. Intentar Open Library Search API (sin límites de cuota, rápida con campos seleccionados)
+      // 1. TIER 1: Google Books Search API (Excelente cobertura en español y rapidez instantánea)
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
-        const olUrl = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=8&fields=title,author_name,first_publish_year,cover_i,isbn,number_of_pages_median,subject`;
-        const res = await fetch(olUrl, { signal: controller.signal });
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const keyParam = STATE.apiKey ? `&key=${encodeURIComponent(STATE.apiKey)}` : '';
+        const gbUrl = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=8${keyParam}`;
+        const res = await fetch(gbUrl, { signal: controller.signal });
         clearTimeout(timeoutId);
         if (res.ok) {
           const data = await res.json();
-          if (data.docs && data.docs.length > 0) {
-            candidates = data.docs.map((doc, idx) => {
-              const isbn = (doc.isbn && doc.isbn[0]) || '';
-              const cover = doc.cover_i 
-                ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` 
-                : (isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg` : '');
+          if (data.items && data.items.length > 0) {
+            candidates = data.items.map((item, idx) => {
+              const info = item.volumeInfo || {};
+              const identifiers = info.industryIdentifiers || [];
+              const isbnObj = identifiers.find(i => i.type === 'ISBN_13') || identifiers.find(i => i.type === 'ISBN_10') || identifiers[0];
+              const isbn = isbnObj ? isbnObj.identifier : '';
+              
+              let cover = '';
+              if (info.imageLinks) {
+                const rawCov = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || '';
+                if (rawCov) cover = rawCov.replace(/^http:\/\//i, 'https://');
+              }
+              const yearMatch = info.publishedDate ? info.publishedDate.match(/\d{4}/) : null;
+
               return {
-                id: 'book-ol-' + Date.now() + '-' + idx,
+                id: 'book-gb-' + Date.now() + '-' + idx,
                 isbn: isbn,
-                title: doc.title || query,
-                author: (doc.author_name && doc.author_name.join(', ')) || 'Autor Desconocido',
-                year: doc.first_publish_year ? String(doc.first_publish_year) : '',
-                pages: doc.number_of_pages_median || 0,
+                title: info.title + (info.subtitle ? `: ${info.subtitle}` : ''),
+                author: (info.authors && info.authors.length > 0) ? info.authors.join(', ') : 'Autor Desconocido',
+                year: yearMatch ? yearMatch[0] : (info.publishedDate || ''),
+                pages: info.pageCount || 0,
                 cover: cover,
-                synopsis: `Obra clásica catalogada en Open Library.`,
-                genre: (doc.subject && doc.subject[0]) || 'Literatura'
+                synopsis: info.description || 'Obra catalogada en Google Books.',
+                genre: (info.categories && info.categories[0]) || 'Literatura'
               };
             });
           }
         }
       } catch (err) {
-        console.warn('Open Library search warning:', err);
+        console.warn('Google Books search warning:', err);
       }
 
-      // 2. Si no hubo resultados y tenemos API Key de Gemini: ¡Consultar a Gemini!
+      // 2. TIER 2: Open Library Search API (Si Google Books no devolvió resultados)
+      if (candidates.length === 0) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000);
+          const olUrl = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=8&fields=title,author_name,first_publish_year,cover_i,isbn,number_of_pages_median,subject`;
+          const res = await fetch(olUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.docs && data.docs.length > 0) {
+              candidates = data.docs.map((doc, idx) => {
+                const isbn = (doc.isbn && doc.isbn[0]) || '';
+                const cover = doc.cover_i 
+                  ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` 
+                  : (isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg` : '');
+                return {
+                  id: 'book-ol-' + Date.now() + '-' + idx,
+                  isbn: isbn,
+                  title: doc.title || query,
+                  author: (doc.author_name && doc.author_name.join(', ')) || 'Autor Desconocido',
+                  year: doc.first_publish_year ? String(doc.first_publish_year) : '',
+                  pages: doc.number_of_pages_median || 0,
+                  cover: cover,
+                  synopsis: `Obra clásica catalogada en Open Library.`,
+                  genre: (doc.subject && doc.subject[0]) || 'Literatura'
+                };
+              });
+            }
+          }
+        } catch (err) {
+          console.warn('Open Library search warning:', err);
+        }
+      }
+
+      // 3. TIER 3: Si no hubo resultados en catálogos y tenemos API Key de Gemini: ¡Consultar a Gemini!
       if (candidates.length === 0 && STATE.apiKey) {
         try {
           const aiCandidates = await identifyBookWithGemini(query, false);
@@ -1593,9 +1639,13 @@
       setTimeout(() => overlay.classList.remove('scan-flash'), 350);
 
       if (!STATE.scanQueue.includes(cleanCode)) {
+        if (STATE.scanQueue.length >= 20) {
+          showToast("Límite de lote alcanzado (máx. 20 libros). Procese el lote actual.");
+          return;
+        }
         STATE.scanQueue.push(cleanCode);
         saveQueue();
-        showToast(`ISBN ${cleanCode} añadido a la cola`);
+        showToast(`ISBN ${cleanCode} añadido a la cola (${STATE.scanQueue.length}/20)`);
       }
     }
 
@@ -1604,7 +1654,7 @@
       const listEl = document.getElementById('scan-queue-list');
       const saveBtn = document.getElementById('batch-save-btn');
 
-      countEl.innerText = `${STATE.scanQueue.length} códigos`;
+      countEl.innerText = `${STATE.scanQueue.length} / 20 códigos (Máx. 20)`;
 
       if (STATE.scanQueue.length === 0) {
         listEl.innerHTML = `<p class="text-[#7d654a] italic text-center py-2">No hay códigos en cola.</p>`;
@@ -1629,11 +1679,15 @@
         return;
       }
       if (!STATE.scanQueue.includes(cleanCode)) {
+        if (STATE.scanQueue.length >= 20) {
+          showToast("Límite de lote alcanzado (máx. 20 libros). Procese el lote actual.");
+          return;
+        }
         STATE.scanQueue.push(cleanCode);
         saveQueue();
         input.value = '';
         renderScanQueue();
-        showToast(`ISBN ${cleanCode} añadido a la cola`);
+        showToast(`ISBN ${cleanCode} añadido a la cola (${STATE.scanQueue.length}/20)`);
       } else {
         showToast("Ese código ya se encuentra en la cola");
       }
@@ -1645,36 +1699,145 @@
     }
 
     // ==========================================
-    // CLIENTE GEMINI 3.8 FLASH ULTRA-RÁPIDO & RESILIENTE
+    // TIER 1: GOOGLE BOOKS API (CATÁLOGO LÍDER EN ESPAÑOL, RÁPIDO Y GRATUITO)
+    // ==========================================
+    async function fetchGoogleBooksByIsbn(isbn) {
+      const cleanIsbn = isbn.replace(/[^0-9X]/gi, '').trim();
+      if (!cleanIsbn) return null;
+
+      const keyParam = STATE.apiKey ? `&key=${encodeURIComponent(STATE.apiKey)}` : '';
+      const url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}${keyParam}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+      try {
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (!data.items || data.items.length === 0) return null;
+
+        const info = data.items[0].volumeInfo || {};
+        if (!info.title) return null;
+
+        const author = (info.authors && info.authors.length > 0)
+          ? info.authors.join(', ')
+          : 'Autor Desconocido';
+
+        const yearMatch = info.publishedDate ? info.publishedDate.match(/\d{4}/) : null;
+        const year = yearMatch ? yearMatch[0] : (info.publishedDate || '');
+        const pages = info.pageCount || 0;
+        const subjects = (info.categories && info.categories.length > 0)
+          ? info.categories.slice(0, 2).join(' / ')
+          : 'Literatura';
+        const synopsis = info.description || '';
+
+        let cover = '';
+        if (info.imageLinks) {
+          const rawCover = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || '';
+          if (rawCover) {
+            cover = rawCover.replace(/^http:\/\//i, 'https://');
+          }
+        }
+
+        return {
+          title: info.title + (info.subtitle ? `: ${info.subtitle}` : ''),
+          author: author,
+          year: year,
+          pages: pages,
+          cover: cover,
+          synopsis: synopsis,
+          genre: subjects,
+          source: 'Google Books'
+        };
+      } catch (e) {
+        clearTimeout(timeoutId);
+        return null;
+      }
+    }
+
+    // ==========================================
+    // CLIENTE GEMINI CON MULTIMODELO VIGENTE & TIMEOUT
     // ==========================================
     async function callGemini(payload) {
       if (!STATE.apiKey) throw new Error("No hay clave de API configurada");
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${STATE.apiKey}`;
 
-      // Asegurar que no se envíen parámetros de thinking incompatibles
+      // Probamos modelos vigentes soportados por Google Developer API
+      const modelsToTry = ['gemini-flash-latest', 'gemini-2.0-flash', 'gemini-3.8-flash'];
+      let lastError = null;
+
       const cleanPayload = JSON.parse(JSON.stringify(payload));
       if (cleanPayload.generationConfig && cleanPayload.generationConfig.thinkingConfig) {
         delete cleanPayload.generationConfig.thinkingConfig;
       }
 
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cleanPayload)
-      });
+      for (const model of modelsToTry) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${STATE.apiKey}`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 7000);
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error?.message || `HTTP ${res.status}`);
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cleanPayload),
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+
+          if (res.ok) {
+            const data = await res.json();
+            const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (text) return text;
+          } else {
+            const errJson = await res.json().catch(() => ({}));
+            lastError = new Error(errJson.error?.message || `HTTP ${res.status}`);
+          }
+        } catch (e) {
+          clearTimeout(timeoutId);
+          lastError = e;
+        }
       }
 
-      const data = await res.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error("El modelo no devolvió contenido");
-      return text;
+      throw (lastError || new Error("No se obtuvo respuesta de Gemini"));
     }
 
-    // IDENTIFICADOR INTELIGENTE DE LIBROS MEDIANTE GEMINI (RESPALDO INFALIBLE PARA EDICIONES EN ESPAÑOL)
+    async function testGeminiConnection() {
+      const resultEl = document.getElementById('gemini-test-result');
+      if (!STATE.apiKey) {
+        showToast("Primero ingrese y guarde su clave de Gemini");
+        return;
+      }
+
+      if (resultEl) {
+        resultEl.classList.remove('hidden', 'text-[#7d2929]', 'text-[#2e5a27]');
+        resultEl.className = "text-[9px] serif italic text-[#7d654a]";
+        resultEl.innerText = "Probando conexión con Gemini...";
+      }
+
+      const t0 = Date.now();
+      try {
+        const testPayload = {
+          contents: [{ role: 'user', parts: [{ text: "Responde únicamente 'OK'" }] }],
+          generationConfig: { maxOutputTokens: 10, temperature: 0 }
+        };
+        const res = await callGemini(testPayload);
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        if (resultEl) {
+          resultEl.className = "text-[9px] serif font-bold text-[#2e5a27]";
+          resultEl.innerText = `✓ Conexión exitosa con Gemini en ${elapsed}s ("${res.trim().slice(0, 20)}")`;
+        }
+        showToast(`Gemini conectado correctamente (${elapsed}s)`);
+      } catch (err) {
+        if (resultEl) {
+          resultEl.className = "text-[9px] serif font-bold text-[#7d2929]";
+          resultEl.innerText = `✕ Error al conectar: ${err.message}`;
+        }
+        showToast("Error de conexión con Gemini");
+      }
+    }
+
+    // TIER 3: IDENTIFICADOR INTELIGENTE MEDIANTE GEMINI (RESPALDO FINAL DE RESOLUCIÓN)
     async function identifyBookWithGemini(queryOrIsbn, isIsbn = true) {
       if (!STATE.apiKey) return null;
 
@@ -1723,30 +1886,18 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
       }
     }
 
+    // RESOLUCIÓN MULTINIVEL DE METADATOS: GOOGLE BOOKS -> OPEN LIBRARY -> GEMINI -> FALLBACK CLÁSICO
     async function fetchBookMetadataByIsbn(isbn) {
       let result = null;
 
-      // 1. Si disponemos de Gemini, consultar prioritariamente (cobertura 100% de literatura y ediciones en español)
-      if (STATE.apiKey) {
-        try {
-          const aiData = await identifyBookWithGemini(isbn, true);
-          if (aiData && aiData.title && !aiData.error) {
-            result = {
-              title: aiData.title,
-              author: aiData.author || 'Autor Desconocido',
-              year: aiData.year || '',
-              pages: aiData.pages || 0,
-              cover: `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
-              synopsis: aiData.synopsis || 'Sin sinopsis disponible.',
-              genre: aiData.genre || 'Literatura'
-            };
-          }
-        } catch (err) {
-          console.warn("Aviso al resolver con Gemini:", err);
-        }
+      // 1. TIER 1: Google Books API (Catálogo líder en español, rápido y con sinopsis oficiales)
+      try {
+        result = await fetchGoogleBooksByIsbn(isbn);
+      } catch (err) {
+        console.warn("Google Books fallback:", err);
       }
 
-      // 2. Si no hubo resultado o no hay clave, intentar Open Library Data API
+      // 2. TIER 2: Open Library Data API (Si Google Books no encontró la edición)
       if (!result || !result.title) {
         try {
           const controller = new AbortController();
@@ -1761,7 +1912,8 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
               const yearMatch = item.publish_date ? item.publish_date.match(/\d{4}/) : null;
               const year = yearMatch ? yearMatch[0] : (item.publish_date || '');
               const pages = item.number_of_pages || 0;
-              const cover = (item.cover && (item.cover.medium || item.cover.large || item.cover.small)) || '';
+              let cover = (item.cover && (item.cover.medium || item.cover.large || item.cover.small)) || '';
+              if (cover) cover = cover.replace(/^http:\/\//i, 'https://');
               const subjects = (item.subjects && item.subjects.length > 0) ? item.subjects.slice(0, 2).map(s => s.name).join(' / ') : 'Literatura';
               result = {
                 title: item.title,
@@ -1770,14 +1922,15 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
                 pages: pages,
                 cover: cover,
                 synopsis: item.notes || (item.excerpts && item.excerpts[0]?.text) || '',
-                genre: subjects
+                genre: subjects,
+                source: 'Open Library'
               };
             }
           }
         } catch (err) {}
       }
 
-      // 3. Fallback directo de Open Library por ISBN
+      // 3. TIER 2B: Open Library Endpoint directo por ISBN
       if (!result || !result.title) {
         try {
           const controller = new AbortController();
@@ -1795,14 +1948,34 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
                 pages: item.number_of_pages || 0,
                 cover: `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
                 synopsis: typeof item.description === 'string' ? item.description : (item.description?.value || ''),
-                genre: 'Literatura'
+                genre: 'Literatura',
+                source: 'Open Library Direct'
               };
             }
           }
         } catch (err) {}
       }
 
-      // 4. Fallback garantizado si ningún catálogo devolvió título
+      // 4. TIER 3: Gemini IA (Solo si ni Google Books ni Open Library lo hallaron y hay API Key)
+      if ((!result || !result.title) && STATE.apiKey) {
+        try {
+          const aiData = await identifyBookWithGemini(isbn, true);
+          if (aiData && aiData.title && !aiData.error) {
+            result = {
+              title: aiData.title,
+              author: aiData.author || 'Autor Desconocido',
+              year: aiData.year || '',
+              pages: aiData.pages || 0,
+              cover: `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
+              synopsis: aiData.synopsis || 'Sin sinopsis disponible.',
+              genre: aiData.genre || 'Literatura',
+              source: 'Gemini IA'
+            };
+          }
+        } catch (err) {}
+      }
+
+      // 5. Fallback garantizado si ningún catálogo devolvió título
       if (!result || !result.title) {
         result = {
           title: `Ejemplar ISBN ${isbn}`,
@@ -1811,7 +1984,8 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
           pages: 0,
           cover: '',
           synopsis: 'Ejemplar incorporado mediante lectura de código de barras. Puede editar el título y detalles tocando este libro.',
-          genre: 'General'
+          genre: 'General',
+          source: 'Manual'
         };
       }
 
@@ -1823,35 +1997,49 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
       return result;
     }
 
+    // PROCESAMIENTO POR LOTES CON CONTROL DE CONCURRENCIA (MÁXIMO 20 LIBROS)
     async function processBatchQueue() {
       if (STATE.scanQueue.length === 0) return;
       const saveBtn = document.getElementById('batch-save-btn');
       saveBtn.disabled = true;
 
       const total = STATE.scanQueue.length;
-      saveBtn.innerText = `Consultando ${total} libros en paralelo...`;
+      const queue = [...STATE.scanQueue];
+      const results = [];
+      const CHUNK_SIZE = 4; // Procesamiento fluido en micro-lotes de 4 concurrentes
 
       try {
-        const queue = [...STATE.scanQueue];
-        const results = await Promise.all(queue.map(async (isbn, i) => {
-          const meta = await fetchBookMetadataByIsbn(isbn);
-          return {
-            id: 'book-scan-' + isbn + '-' + Date.now() + '-' + i,
-            isbn: isbn,
-            title: meta.title,
-            author: meta.author,
-            year: meta.year,
-            pages: meta.pages,
-            cover: meta.cover,
-            synopsis: meta.synopsis,
-            genre: meta.genre,
-            status: 'Pendiente',
-            rating: 0,
-            origin: '',
-            loan: { borrower: '', phone: '' },
-            addedAt: new Date().toISOString()
-          };
-        }));
+        for (let i = 0; i < queue.length; i += CHUNK_SIZE) {
+          const chunk = queue.slice(i, i + CHUNK_SIZE);
+          saveBtn.innerText = `Catalogando ${Math.min(i + chunk.length, total)} de ${total}...`;
+
+          const chunkResults = await Promise.all(chunk.map((isbn, idx) => fetchBookMetadataByIsbn(isbn)));
+          
+          chunkResults.forEach((meta, idx) => {
+            const isbn = chunk[idx];
+            results.push({
+              id: 'book-scan-' + isbn + '-' + Date.now() + '-' + (i + idx),
+              isbn: isbn,
+              title: meta.title,
+              author: meta.author,
+              year: meta.year,
+              pages: meta.pages,
+              cover: meta.cover,
+              synopsis: meta.synopsis,
+              genre: meta.genre,
+              status: 'Pendiente',
+              rating: 0,
+              origin: meta.source || '',
+              loan: { borrower: '', phone: '' },
+              addedAt: new Date().toISOString()
+            });
+          });
+
+          // Breve pausa preventiva de 100ms entre bloques para fluidez
+          if (i + CHUNK_SIZE < queue.length) {
+            await new Promise(r => setTimeout(r, 100));
+          }
+        }
 
         results.forEach(book => STATE.books.unshift(book));
 
@@ -1862,8 +2050,8 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
         showToast(`¡${results.length} libros incorporados a su Estantería!`);
         switchTab('shelf');
       } catch (err) {
-        console.error('Error procesando cola:', err);
-        showToast("Aviso al procesar cola de escaneo.");
+        console.error('Error procesando lote:', err);
+        showToast("Aviso al procesar lote de libros.");
       } finally {
         saveBtn.disabled = false;
         saveBtn.innerText = "Procesar y Guardar Lote";
