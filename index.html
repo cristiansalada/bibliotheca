@@ -2,7 +2,7 @@
 <html lang="es" class="h-full bg-[#faf6ee] text-[#2d1e13]">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#2d1e13">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -674,7 +674,8 @@
     function loadStoredData() {
       try {
         const storedBooks = localStorage.getItem('biblio_books');
-        STATE.books = storedBooks ? JSON.parse(storedBooks) : [];
+        try { STATE.books = storedBooks ? JSON.parse(storedBooks) : []; if (!Array.isArray(STATE.books)) throw 0; }
+        catch (e) { try { localStorage.setItem('biblio_books_respaldo_corrupto', storedBooks); } catch (_) {} STATE.books = []; }
 
         const storedQueue = localStorage.getItem('biblio_queue');
         STATE.scanQueue = storedQueue ? JSON.parse(storedQueue) : [];
@@ -702,7 +703,7 @@
     }
 
     function saveBooks() {
-      localStorage.setItem('biblio_books', JSON.stringify(STATE.books));
+      try { localStorage.setItem('biblio_books', JSON.stringify(STATE.books)); } catch (e) { showToast('No se pudo guardar: almacenamiento lleno. Exporte un respaldo.'); }
       renderAll();
     }
 
@@ -940,7 +941,7 @@
         const fallbackCover = generateClassicalCoverSvg(b.title, b.author);
         const coverSrc = b.cover || fallbackCover;
         const coverHtml = `
-          <img src="${coverSrc}" alt="${b.title}" onerror="this.onerror=null; this.src='${fallbackCover}'" class="w-full h-44 object-cover rounded book-spine">
+          <img src="${coverSrc}" alt="${esc(b.title)}" onerror="this.onerror=null; this.src='${fallbackCover}'" class="w-full h-44 object-cover rounded book-spine">
         `;
 
         const isSelected = STATE.selectedBookIds.has(b.id);
@@ -968,10 +969,10 @@
               </span>
             </div>
             <div>
-              <h3 class="font-bold text-[11px] text-[#2d1e13] truncate serif">${b.title}</h3>
-              <p class="text-[9px] text-[#7d654a] truncate italic">${b.author}</p>
+              <h3 class="font-bold text-[11px] text-[#2d1e13] truncate serif">${esc(b.title)}</h3>
+              <p class="text-[9px] text-[#7d654a] truncate italic">${esc(b.author)}</p>
               <div class="flex items-center justify-between text-[8px] text-[#7d654a] pt-1 border-t border-[#2d1e13]/10 mt-1">
-                <span>${pages > 0 ? `${pages}p • ${estHours}` : (b.year || 'N/A')}</span>
+                <span>${pages > 0 ? `${pages}p • ${estHours}` : esc(b.year || 'N/A')}</span>
                 <span class="font-bold text-[#2d1e13]">${stars}</span>
               </div>
             </div>
@@ -1005,9 +1006,9 @@
             <div class="flex items-center min-w-0 pr-2">
               ${checkboxHtml}
               <div class="min-w-0">
-                <h4 class="font-bold text-[11px] text-[#2d1e13] truncate serif">${b.title}</h4>
+                <h4 class="font-bold text-[11px] text-[#2d1e13] truncate serif">${esc(b.title)}</h4>
                 <p class="text-[9px] text-[#7d654a] truncate italic">
-                  ${b.author} • ${pages > 0 ? `${pages} págs ${estHours}` : b.year} ${stars ? '• ' + stars : ''}
+                  ${esc(b.author)} • ${pages > 0 ? `${pages} págs ${estHours}` : esc(b.year)} ${stars ? '• ' + stars : ''}
                 </p>
               </div>
             </div>
@@ -1085,7 +1086,7 @@
       let updatedCount = 0;
       STATE.books.forEach(b => {
         if (STATE.selectedBookIds.has(b.id)) {
-          b.status = newStatus;
+          b.status = newStatus; if (newStatus === 'Leído' && !b.finishedAt) b.finishedAt = new Date().toISOString();
           if (newStatus === 'Leído' && !b.readDate) {
             b.readDate = new Date().toISOString();
           }
@@ -1232,7 +1233,7 @@
     function changeBookStatus(newStatus) {
       const book = STATE.books.find(b => b.id === STATE.selectedBookId);
       if (book) {
-        book.status = newStatus;
+        book.status = newStatus; if (newStatus === 'Leído' && !book.finishedAt) book.finishedAt = new Date().toISOString();
         if (newStatus === 'Leído' && !book.readDate) {
           book.readDate = new Date().toISOString();
         }
@@ -1389,7 +1390,7 @@
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 4000);
-        const keyParam = STATE.apiKey ? `&key=${encodeURIComponent(STATE.apiKey)}` : '';
+        const keyParam = '';
         const gbUrl = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=8${keyParam}`;
         const res = await fetch(gbUrl, { signal: controller.signal });
         clearTimeout(timeoutId);
@@ -1520,7 +1521,7 @@
           origin: '',
           loan: { borrower: '', phone: '' },
           addedAt: new Date().toISOString()
-        }));
+        })).replace(/'/g, '%27');
 
         const fallbackCover = generateClassicalCoverSvg(book.title, book.author);
 
@@ -1528,8 +1529,8 @@
           <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 p-2 rounded flex gap-2 items-center justify-between shadow-xs">
             <img src="${book.cover || fallbackCover}" onerror="this.onerror=null; this.src='${fallbackCover}'" class="w-9 h-13 object-cover rounded shadow shrink-0 bg-[#2d1e13]">
             <div class="flex-1 min-w-0 pr-1 text-[10px]">
-              <p class="font-bold truncate serif text-[#2d1e13]">${book.title}</p>
-              <p class="text-[#7d654a] italic text-[9px] truncate">${book.author} ${book.year ? '• ' + book.year : ''}</p>
+              <p class="font-bold truncate serif text-[#2d1e13]">${esc(book.title)}</p>
+              <p class="text-[#7d654a] italic text-[9px] truncate">${esc(book.author)} ${book.year ? '• ' + esc(book.year) : ''}</p>
               <p class="text-[#7d654a] text-[8px]">${book.pages > 0 ? `${book.pages} páginas` : ''}</p>
             </div>
             <div class="flex flex-col gap-1 shrink-0">
@@ -1588,10 +1589,10 @@
 
       try {
         if (!STATE.scanner) {
-          STATE.scanner = new Html5Qrcode("reader");
+          STATE.scanner = new Html5Qrcode("reader", { formatsToSupport: [Html5QrcodeSupportedFormats.EAN_13], useBarCodeDetectorIfSupported: true });
         }
 
-        const config = { fps: 15, qrbox: { width: 220, height: 140 }, aspectRatio: 1.333333 };
+        const config = { fps: 15, qrbox: { width: 280, height: 120 }, aspectRatio: 1.333333 };
         statusLabel.innerText = "Iniciando visor...";
 
         await STATE.scanner.start(
@@ -1622,8 +1623,8 @@
     }
 
     function onScanSuccess(decodedText) {
-      const cleanCode = decodedText.replace(/[^0-9X]/gi, '').trim();
-      if (cleanCode.length < 10) return;
+      const cleanCode = toIsbn13(decodedText);
+      if (!cleanCode) return;
 
       const now = Date.now();
       if (cleanCode === STATE.lastScannedIsbn && (now - STATE.lastScannedTime) < 2500) return;
@@ -1631,6 +1632,7 @@
       STATE.lastScannedIsbn = cleanCode;
       STATE.lastScannedTime = now;
 
+      if (STATE.books.some(b => b.isbn === cleanCode)) { showToast('Ya está en su biblioteca'); return; }
       playBeep(780, 0.12);
       if (navigator.vibrate) navigator.vibrate(80);
 
@@ -1701,59 +1703,76 @@
     // ==========================================
     // TIER 1: GOOGLE BOOKS API (CATÁLOGO LÍDER EN ESPAÑOL, RÁPIDO Y GRATUITO)
     // ==========================================
-    async function fetchGoogleBooksByIsbn(isbn) {
-      const cleanIsbn = isbn.replace(/[^0-9X]/gi, '').trim();
-      if (!cleanIsbn) return null;
-
-      const keyParam = STATE.apiKey ? `&key=${encodeURIComponent(STATE.apiKey)}` : '';
-      const url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}${keyParam}`;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
-
-      try {
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        if (!res.ok) return null;
-        const data = await res.json();
-        if (!data.items || data.items.length === 0) return null;
-
-        const info = data.items[0].volumeInfo || {};
-        if (!info.title) return null;
-
-        const author = (info.authors && info.authors.length > 0)
-          ? info.authors.join(', ')
-          : 'Autor Desconocido';
-
-        const yearMatch = info.publishedDate ? info.publishedDate.match(/\d{4}/) : null;
-        const year = yearMatch ? yearMatch[0] : (info.publishedDate || '');
-        const pages = info.pageCount || 0;
-        const subjects = (info.categories && info.categories.length > 0)
-          ? info.categories.slice(0, 2).join(' / ')
-          : 'Literatura';
-        const synopsis = info.description || '';
-
-        let cover = '';
-        if (info.imageLinks) {
-          const rawCover = info.imageLinks.thumbnail || info.imageLinks.smallThumbnail || '';
-          if (rawCover) {
-            cover = rawCover.replace(/^http:\/\//i, 'https://');
-          }
-        }
-
-        return {
-          title: info.title + (info.subtitle ? `: ${info.subtitle}` : ''),
-          author: author,
-          year: year,
-          pages: pages,
-          cover: cover,
-          synopsis: synopsis,
-          genre: subjects,
-          source: 'Google Books'
-        };
-      } catch (e) {
-        clearTimeout(timeoutId);
-        return null;
+    // ---------- ISBN: validación, conversión y búsqueda multi-fuente ----------
+    function esc(x) { return String(x == null ? '' : x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function stripTags(t) { return String(t || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); }
+    function toIsbn13(raw) {
+      const c = String(raw).replace(/[^0-9X]/gi, '').toUpperCase();
+      if (c.length === 13 && /^97[89]\d{10}$/.test(c)) {
+        let t = 0; for (let i = 0; i < 12; i++) t += (+c[i]) * (i % 2 ? 3 : 1);
+        return (10 - t % 10) % 10 === +c[12] ? c : null;
       }
+      if (c.length === 10 && /^\d{9}[\dX]$/.test(c)) {
+        let s10 = 0; for (let i = 0; i < 9; i++) s10 += (+c[i]) * (10 - i);
+        s10 += c[9] === 'X' ? 10 : +c[9];
+        if (s10 % 11 !== 0) return null;
+        const b = '978' + c.slice(0, 9); let t = 0;
+        for (let i = 0; i < 12; i++) t += (+b[i]) * (i % 2 ? 3 : 1);
+        return b + ((10 - t % 10) % 10);
+      }
+      return null;
+    }
+    function toIsbn10(i13) {
+      if (!/^978\d{10}$/.test(i13)) return null;
+      const b = i13.slice(3, 12); let t = 0;
+      for (let i = 0; i < 9; i++) t += (+b[i]) * (10 - i);
+      const r = (11 - t % 11) % 11;
+      return b + (r === 10 ? 'X' : r);
+    }
+    async function fetchJson(url, ms = 8000, retries = 1) {
+      for (let a = 0; a <= retries; a++) {
+        const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), ms);
+        try {
+          const r = await fetch(url, { signal: ctl.signal }); clearTimeout(tm);
+          if (r.ok) return await r.json();
+          if (r.status !== 429 && r.status < 500) return null;
+        } catch (e) { clearTimeout(tm); }
+        await new Promise(r => setTimeout(r, 700 * (a + 1)));
+      }
+      return null;
+    }
+    async function fetchGoogleBooksByIsbn(isbn) {
+      const i10 = toIsbn10(isbn);
+      for (const q of [`isbn:${isbn}`, i10 && `isbn:${i10}`, isbn].filter(Boolean)) {
+        const d = await fetchJson(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5&printType=books`);
+        const items = ((d && d.items) || []).filter(x => x.volumeInfo && x.volumeInfo.title);
+        if (!items.length) continue;
+        const score = x => { const v = x.volumeInfo, ids = (v.industryIdentifiers || []).map(i => i.identifier);
+          return (ids.includes(isbn) || ids.includes(i10) ? 4 : 0) + (v.description ? 2 : 0) + (v.imageLinks ? 1 : 0) + (v.pageCount ? 1 : 0) + (v.language === 'es' ? 1 : 0); };
+        items.sort((a, b) => score(b) - score(a));
+        const v = items[0].volumeInfo, ym = (v.publishedDate || '').match(/\d{4}/);
+        const img = v.imageLinks ? (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail || '') : '';
+        return { title: v.title + (v.subtitle ? `: ${v.subtitle}` : ''), author: (v.authors || []).join(', '), year: ym ? ym[0] : '',
+          pages: v.pageCount || 0, cover: img.replace(/^http:\/\//i, 'https://'), synopsis: stripTags(v.description),
+          genre: (v.categories || []).slice(0, 2).join(' / '), source: 'Google Books' };
+      }
+      return null;
+    }
+    async function fetchOpenLibraryByIsbn(isbn) {
+      const d = await fetchJson(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`, 6000, 0);
+      const it = d && d['ISBN:' + isbn]; if (!it || !it.title) return null;
+      const ym = (it.publish_date || '').match(/\d{4}/);
+      const cv = (it.cover && (it.cover.medium || it.cover.large || it.cover.small)) || '';
+      return { title: it.title + (it.subtitle ? `: ${it.subtitle}` : ''), author: (it.authors || []).map(a => a.name).join(', '),
+        year: ym ? ym[0] : '', pages: it.number_of_pages || 0, cover: cv.replace(/^http:\/\//i, 'https://'),
+        synopsis: stripTags(typeof it.notes === 'string' ? it.notes : ''), genre: (it.subjects || []).slice(0, 2).map(x => x.name).join(' / '), source: 'Open Library' };
+    }
+    async function lookupIsbnMulti(isbn) {
+      const [g, o] = await Promise.all([fetchGoogleBooksByIsbn(isbn).catch(() => null), fetchOpenLibraryByIsbn(isbn).catch(() => null)]);
+      const parts = [g, o].filter(Boolean); if (!parts.length) return null;
+      const pick = k => { for (const p of parts) if (p[k]) return p[k]; return ''; };
+      return { title: pick('title'), author: pick('author') || 'Autor Desconocido', year: pick('year'), pages: pick('pages'), cover: pick('cover'),
+        synopsis: pick('synopsis'), genre: pick('genre') || 'Literatura', source: parts.map(p => p.source).join(' + ') };
     }
 
     // ==========================================
@@ -1763,7 +1782,7 @@
       if (!STATE.apiKey) throw new Error("No hay clave de API configurada");
 
       // Probamos modelos vigentes soportados por Google Developer API
-      const modelsToTry = ['gemini-flash-latest', 'gemini-2.0-flash', 'gemini-3.8-flash'];
+      const modelsToTry = ['gemini-flash-latest', 'gemini-2.0-flash'];
       let lastError = null;
 
       const cleanPayload = JSON.parse(JSON.stringify(payload));
@@ -1772,14 +1791,14 @@
       }
 
       for (const model of modelsToTry) {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${STATE.apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 7000);
 
         try {
           const res = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': STATE.apiKey },
             body: JSON.stringify(cleanPayload),
             signal: controller.signal
           });
@@ -1888,89 +1907,16 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
 
     // RESOLUCIÓN MULTINIVEL DE METADATOS: GOOGLE BOOKS -> OPEN LIBRARY -> GEMINI -> FALLBACK CLÁSICO
     async function fetchBookMetadataByIsbn(isbn) {
-      let result = null;
+      isbn = toIsbn13(isbn) || String(isbn).replace(/[^0-9X]/gi, '');
+      let result = await lookupIsbnMulti(isbn);
 
-      // 1. TIER 1: Google Books API (Catálogo líder en español, rápido y con sinopsis oficiales)
-      try {
-        result = await fetchGoogleBooksByIsbn(isbn);
-      } catch (err) {
-        console.warn("Google Books fallback:", err);
-      }
-
-      // 2. TIER 2: Open Library Data API (Si Google Books no encontró la edición)
-      if (!result || !result.title) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2500);
-          const res = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`, { signal: controller.signal });
-          clearTimeout(timeoutId);
-          if (res.ok) {
-            const data = await res.json();
-            const item = data[`ISBN:${isbn}`];
-            if (item && item.title) {
-              const author = (item.authors && item.authors.length > 0) ? item.authors.map(a => a.name).join(', ') : 'Autor Desconocido';
-              const yearMatch = item.publish_date ? item.publish_date.match(/\d{4}/) : null;
-              const year = yearMatch ? yearMatch[0] : (item.publish_date || '');
-              const pages = item.number_of_pages || 0;
-              let cover = (item.cover && (item.cover.medium || item.cover.large || item.cover.small)) || '';
-              if (cover) cover = cover.replace(/^http:\/\//i, 'https://');
-              const subjects = (item.subjects && item.subjects.length > 0) ? item.subjects.slice(0, 2).map(s => s.name).join(' / ') : 'Literatura';
-              result = {
-                title: item.title,
-                author: author,
-                year: year,
-                pages: pages,
-                cover: cover,
-                synopsis: item.notes || (item.excerpts && item.excerpts[0]?.text) || '',
-                genre: subjects,
-                source: 'Open Library'
-              };
-            }
-          }
-        } catch (err) {}
-      }
-
-      // 3. TIER 2B: Open Library Endpoint directo por ISBN
-      if (!result || !result.title) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2000);
-          const res = await fetch(`https://openlibrary.org/isbn/${isbn}.json`, { signal: controller.signal });
-          clearTimeout(timeoutId);
-          if (res.ok) {
-            const item = await res.json();
-            if (item && item.title) {
-              const yearMatch = item.publish_date ? item.publish_date.match(/\d{4}/) : null;
-              result = {
-                title: item.title,
-                author: 'Autor por catálogo',
-                year: yearMatch ? yearMatch[0] : (item.publish_date || ''),
-                pages: item.number_of_pages || 0,
-                cover: `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
-                synopsis: typeof item.description === 'string' ? item.description : (item.description?.value || ''),
-                genre: 'Literatura',
-                source: 'Open Library Direct'
-              };
-            }
-          }
-        } catch (err) {}
-      }
-
-      // 4. TIER 3: Gemini IA (Solo si ni Google Books ni Open Library lo hallaron y hay API Key)
       if ((!result || !result.title) && STATE.apiKey) {
         try {
-          const aiData = await identifyBookWithGemini(isbn, true);
-          if (aiData && aiData.title && !aiData.error) {
-            result = {
-              title: aiData.title,
-              author: aiData.author || 'Autor Desconocido',
-              year: aiData.year || '',
-              pages: aiData.pages || 0,
-              cover: `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`,
-              synopsis: aiData.synopsis || 'Sin sinopsis disponible.',
-              genre: aiData.genre || 'Literatura',
-              source: 'Gemini IA'
-            };
+          const ai = await identifyBookWithGemini(isbn, true);
+          if (ai && ai.title && !ai.error) {
+            result = { title: ai.title, author: ai.author || 'Autor Desconocido', year: ai.year || '', pages: ai.pages || 0,
+              cover: `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`, synopsis: ai.synopsis || '', genre: ai.genre || 'Literatura',
+              source: 'Gemini IA (sin verificar)' };
           }
         } catch (err) {}
       }
@@ -2006,7 +1952,7 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
       const total = STATE.scanQueue.length;
       const queue = [...STATE.scanQueue];
       const results = [];
-      const CHUNK_SIZE = 4; // Procesamiento fluido en micro-lotes de 4 concurrentes
+      const CHUNK_SIZE = 2; // Procesamiento fluido en micro-lotes de 4 concurrentes
 
       try {
         for (let i = 0; i < queue.length; i += CHUNK_SIZE) {
@@ -2214,9 +2160,12 @@ Pautas para sus respuestas:
 
     function renderStatistics() {
       const readBooks = STATE.books.filter(b => b.status === 'Leído');
-      const yearCount = readBooks.length;
+      const _now = new Date(), _d = b => new Date(b.finishedAt || b.addedAt || 0);
+      const yearBooks = readBooks.filter(b => _d(b).getFullYear() === _now.getFullYear());
+      const yearCount = yearBooks.length;
+      const monthCount = yearBooks.filter(b => _d(b).getMonth() === _now.getMonth()).length;
       document.getElementById('stat-year-count').innerText = `${yearCount} libros`;
-      document.getElementById('stat-month-count').innerText = `${Math.min(yearCount, 1)} libro`;
+      document.getElementById('stat-month-count').innerText = `${monthCount} ${monthCount === 1 ? 'libro' : 'libros'}`;
 
       // Total páginas y horas
       let totalPages = 0;
@@ -2308,7 +2257,7 @@ Pautas para sus respuestas:
           const existingIds = new Set(STATE.books.map(b => b.isbn || b.id));
           let count = 0;
           imported.forEach(b => {
-            if (!existingIds.has(b.isbn || b.id)) {
+            if (b && typeof b.title === 'string' && !existingIds.has(b.isbn || b.id)) {
               STATE.books.push(b);
               count++;
             }
@@ -2337,7 +2286,7 @@ Pautas para sus respuestas:
         `"${(b.isbn || '').replace(/"/g, '""')}"`,
         `"${(b.title || '').replace(/"/g, '""')}"`,
         `"${(b.author || '').replace(/"/g, '""')}"`,
-        `"${(b.year || '').replace(/"/g, '""')}"`,
+        `"${String(b.year || '').replace(/"/g, '""')}"`,
         `"${b.pages || ''}"`,
         `"${(b.genre || '').replace(/"/g, '""')}"`,
         `"${(b.status || '').replace(/"/g, '""')}"`,
