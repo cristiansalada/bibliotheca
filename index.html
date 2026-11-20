@@ -1746,11 +1746,12 @@
       for (const q of [`isbn:${isbn}`, i10 && `isbn:${i10}`, isbn].filter(Boolean)) {
         const d = await fetchJson(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5&printType=books`);
         const items = ((d && d.items) || []).filter(x => x.volumeInfo && x.volumeInfo.title);
-        if (!items.length) continue;
+        const matched = items.filter(x => (x.volumeInfo.industryIdentifiers || []).some(i => { const id = String(i.identifier).replace(/-/g, ''); return id === isbn || id === i10; }));
+        if (!matched.length) continue;
         const score = x => { const v = x.volumeInfo, ids = (v.industryIdentifiers || []).map(i => i.identifier);
           return (ids.includes(isbn) || ids.includes(i10) ? 4 : 0) + (v.description ? 2 : 0) + (v.imageLinks ? 1 : 0) + (v.pageCount ? 1 : 0) + (v.language === 'es' ? 1 : 0); };
-        items.sort((a, b) => score(b) - score(a));
-        const v = items[0].volumeInfo, ym = (v.publishedDate || '').match(/\d{4}/);
+        matched.sort((a, b) => score(b) - score(a));
+        const v = matched[0].volumeInfo, ym = (v.publishedDate || '').match(/\d{4}/);
         const img = v.imageLinks ? (v.imageLinks.thumbnail || v.imageLinks.smallThumbnail || '') : '';
         return { title: v.title + (v.subtitle ? `: ${v.subtitle}` : ''), author: (v.authors || []).join(', '), year: ym ? ym[0] : '',
           pages: v.pageCount || 0, cover: img.replace(/^http:\/\//i, 'https://'), synopsis: stripTags(v.description),
@@ -1767,6 +1768,22 @@
         year: ym ? ym[0] : '', pages: it.number_of_pages || 0, cover: cv.replace(/^http:\/\//i, 'https://'),
         synopsis: stripTags(typeof it.notes === 'string' ? it.notes : ''), genre: (it.subjects || []).slice(0, 2).map(x => x.name).join(' / '), source: 'Open Library' };
     }
+    async function enrichIsbnWithGemini(isbn, base) {
+      if (!STATE.apiKey) return base;
+      const prompt = `Buscá en Google el libro con ISBN ${isbn} (probablemente edición en español, posiblemente de Argentina). Respondé ÚNICAMENTE con un objeto JSON válido, sin markdown, con las claves: {"title":"","author":"","year":"","pages":0,"genre":"","synopsis":"sinopsis de 2 a 4 oraciones en español"}. Usá solo datos encontrados para ESE ISBN exacto (editorial, librería o catálogo). Si no lo encontrás, respondé {"error":"no encontrado"}.`;
+      try {
+        const text = await callGemini({ contents: [{ role: 'user', parts: [{ text: prompt }] }], tools: [{ google_search: {} }], generationConfig: { temperature: 0.1, maxOutputTokens: 900 } }, 25000);
+        const m = text.replace(/```json/gi, '').replace(/```/g, '').match(/\{[\s\S]*\}/);
+        const ai = m && JSON.parse(m[0]);
+        if (!ai || ai.error || !ai.title) return base;
+        const b = base || {};
+        return { title: b.title || ai.title,
+          author: (b.author && b.author !== 'Autor Desconocido') ? b.author : (ai.author || 'Autor Desconocido'),
+          year: b.year || String(ai.year || ''), pages: b.pages || ai.pages || 0, cover: b.cover || '',
+          synopsis: b.synopsis || stripTags(ai.synopsis), genre: (b.genre && b.genre !== 'Literatura') ? b.genre : (ai.genre || 'Literatura'),
+          source: (b.source ? b.source + ' + ' : '') + 'Búsqueda web (Gemini)' };
+      } catch (e) { return base; }
+    }
     async function lookupIsbnMulti(isbn) {
       const [g, o] = await Promise.all([fetchGoogleBooksByIsbn(isbn).catch(() => null), fetchOpenLibraryByIsbn(isbn).catch(() => null)]);
       const parts = [g, o].filter(Boolean); if (!parts.length) return null;
@@ -1778,7 +1795,7 @@
     // ==========================================
     // CLIENTE GEMINI CON MULTIMODELO VIGENTE & TIMEOUT
     // ==========================================
-    async function callGemini(payload) {
+    async function callGemini(payload, ms = 7000) {
       if (!STATE.apiKey) throw new Error("No hay clave de API configurada");
 
       // Probamos modelos vigentes soportados por Google Developer API
@@ -1793,7 +1810,7 @@
       for (const model of modelsToTry) {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 7000);
+        const timeoutId = setTimeout(() => controller.abort(), ms);
 
         try {
           const res = await fetch(url, {
@@ -1910,16 +1927,8 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
       isbn = toIsbn13(isbn) || String(isbn).replace(/[^0-9X]/gi, '');
       let result = await lookupIsbnMulti(isbn);
 
-      if ((!result || !result.title) && STATE.apiKey) {
-        try {
-          const ai = await identifyBookWithGemini(isbn, true);
-          if (ai && ai.title && !ai.error) {
-            result = { title: ai.title, author: ai.author || 'Autor Desconocido', year: ai.year || '', pages: ai.pages || 0,
-              cover: `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`, synopsis: ai.synopsis || '', genre: ai.genre || 'Literatura',
-              source: 'Gemini IA (sin verificar)' };
-          }
-        } catch (err) {}
-      }
+      if ((!result || !result.title || !result.synopsis) && STATE.apiKey) result = await enrichIsbnWithGemini(isbn, result);
+      if (result && result.title && !result.cover) result.cover = `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false`;
 
       // 5. Fallback garantizado si ningún catálogo devolvió título
       if (!result || !result.title) {
