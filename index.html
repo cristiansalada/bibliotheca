@@ -349,6 +349,17 @@
         <p id="gemini-test-result" class="text-[9px] serif italic hidden"></p>
       </div>
 
+      <!-- DIAGNÓSTICO DE ISBN -->
+      <div class="bg-[#f3ebd9] border border-[#2d1e13]/25 rounded p-3 space-y-2">
+        <h3 class="font-bold text-xs serif">Diagnóstico de ISBN</h3>
+        <p class="text-[9px] text-[#7d654a] serif leading-tight">Escriba un ISBN y toque Diagnosticar: muestra qué responde cada servicio.</p>
+        <div class="flex gap-1">
+          <input type="text" id="diag-isbn" inputmode="numeric" placeholder="9789874592064" class="flex-1 bg-white border border-[#2d1e13]/30 rounded px-2 py-1 text-[10px] font-mono text-[#2d1e13]">
+          <button onclick="diagnoseIsbn()" class="btn-solid px-3 py-1 rounded text-[10px] serif">Diagnosticar</button>
+        </div>
+        <pre id="diag-out" class="hidden text-[9px] font-mono whitespace-pre-wrap break-words bg-white border border-[#2d1e13]/20 rounded p-2 select-text"></pre>
+      </div>
+
     </section>
 
   </main>
@@ -1729,22 +1740,25 @@
       const r = (11 - t % 11) % 11;
       return b + (r === 10 ? 'X' : r);
     }
-    async function fetchJson(url, ms = 8000, retries = 1) {
+    async function fetchJson(url, ms = 8000, retries = 1, notes = null) {
+      const host = url.split('/')[2]; let last = '';
       for (let a = 0; a <= retries; a++) {
         const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), ms);
         try {
           const r = await fetch(url, { signal: ctl.signal }); clearTimeout(tm);
           if (r.ok) return await r.json();
-          if (r.status !== 429 && r.status < 500) return null;
-        } catch (e) { clearTimeout(tm); }
-        await new Promise(r => setTimeout(r, 700 * (a + 1)));
+          last = `HTTP ${r.status}`;
+          if (r.status !== 429 && r.status < 500) break;
+        } catch (e) { clearTimeout(tm); last = e.name === 'AbortError' ? 'timeout' : 'error de red/CORS'; }
+        await new Promise(r => setTimeout(r, 900 * (a + 1)));
       }
+      if (notes && last) notes.push(`${host}: ${last}`);
       return null;
     }
-    async function fetchGoogleBooksByIsbn(isbn) {
+    async function fetchGoogleBooksByIsbn(isbn, notes) {
       const i10 = toIsbn10(isbn);
       for (const q of [`isbn:${isbn}`, i10 && `isbn:${i10}`, isbn].filter(Boolean)) {
-        const d = await fetchJson(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5&printType=books`);
+        const d = await fetchJson(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5&printType=books`, 8000, 1, notes);
         const items = ((d && d.items) || []).filter(x => x.volumeInfo && x.volumeInfo.title);
         const matched = items.filter(x => (x.volumeInfo.industryIdentifiers || []).some(i => { const id = String(i.identifier).replace(/-/g, ''); return id === isbn || id === i10; }));
         if (!matched.length) continue;
@@ -1757,10 +1771,12 @@
           pages: v.pageCount || 0, cover: img.replace(/^http:\/\//i, 'https://'), synopsis: stripTags(v.description),
           genre: (v.categories || []).slice(0, 2).join(' / '), source: 'Google Books' };
       }
+      if (notes && !notes.some(n => n.startsWith('www.googleapis'))) notes.push('Google Books: respondió, pero sin ese ISBN');
       return null;
     }
-    async function fetchOpenLibraryByIsbn(isbn) {
-      const d = await fetchJson(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`, 6000, 0);
+    async function fetchOpenLibraryByIsbn(isbn, notes) {
+      const d = await fetchJson(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`, 6000, 1, notes);
+      if (d && !d['ISBN:' + isbn] && notes) notes.push('Open Library: sin ese ISBN');
       const it = d && d['ISBN:' + isbn]; if (!it || !it.title) return null;
       const ym = (it.publish_date || '').match(/\d{4}/);
       const cv = (it.cover && (it.cover.medium || it.cover.large || it.cover.small)) || '';
@@ -1768,24 +1784,24 @@
         year: ym ? ym[0] : '', pages: it.number_of_pages || 0, cover: cv.replace(/^http:\/\//i, 'https://'),
         synopsis: stripTags(typeof it.notes === 'string' ? it.notes : ''), genre: (it.subjects || []).slice(0, 2).map(x => x.name).join(' / '), source: 'Open Library' };
     }
-    async function enrichIsbnWithGemini(isbn, base) {
-      if (!STATE.apiKey) return base;
+    async function enrichIsbnWithGemini(isbn, base, notes) {
+      if (!STATE.apiKey) { if (notes) notes.push('Gemini: sin clave cargada en la app'); return base; }
       const prompt = `Buscá en Google el libro con ISBN ${isbn} (probablemente edición en español, posiblemente de Argentina). Respondé ÚNICAMENTE con un objeto JSON válido, sin markdown, con las claves: {"title":"","author":"","year":"","pages":0,"genre":"","synopsis":"sinopsis de 2 a 4 oraciones en español"}. Usá solo datos encontrados para ESE ISBN exacto (editorial, librería o catálogo). Si no lo encontrás, respondé {"error":"no encontrado"}.`;
       try {
         const text = await callGemini({ contents: [{ role: 'user', parts: [{ text: prompt }] }], tools: [{ google_search: {} }], generationConfig: { temperature: 0.1, maxOutputTokens: 900 } }, 25000);
         const m = text.replace(/```json/gi, '').replace(/```/g, '').match(/\{[\s\S]*\}/);
         const ai = m && JSON.parse(m[0]);
-        if (!ai || ai.error || !ai.title) return base;
+        if (!ai || ai.error || !ai.title) { if (notes) notes.push('Gemini: no encontró el libro'); return base; }
         const b = base || {};
         return { title: b.title || ai.title,
           author: (b.author && b.author !== 'Autor Desconocido') ? b.author : (ai.author || 'Autor Desconocido'),
           year: b.year || String(ai.year || ''), pages: b.pages || ai.pages || 0, cover: b.cover || '',
           synopsis: b.synopsis || stripTags(ai.synopsis), genre: (b.genre && b.genre !== 'Literatura') ? b.genre : (ai.genre || 'Literatura'),
           source: (b.source ? b.source + ' + ' : '') + 'Búsqueda web (Gemini)' };
-      } catch (e) { return base; }
+      } catch (e) { if (notes) notes.push('Gemini: ' + (e.message || e)); return base; }
     }
-    async function lookupIsbnMulti(isbn) {
-      const [g, o] = await Promise.all([fetchGoogleBooksByIsbn(isbn).catch(() => null), fetchOpenLibraryByIsbn(isbn).catch(() => null)]);
+    async function lookupIsbnMulti(isbn, notes) {
+      const [g, o] = await Promise.all([fetchGoogleBooksByIsbn(isbn, notes).catch(() => null), fetchOpenLibraryByIsbn(isbn, notes).catch(() => null)]);
       const parts = [g, o].filter(Boolean); if (!parts.length) return null;
       const pick = k => { for (const p of parts) if (p[k]) return p[k]; return ''; };
       return { title: pick('title'), author: pick('author') || 'Autor Desconocido', year: pick('year'), pages: pick('pages'), cover: pick('cover'),
@@ -1799,7 +1815,7 @@
       if (!STATE.apiKey) throw new Error("No hay clave de API configurada");
 
       // Probamos modelos vigentes soportados por Google Developer API
-      const modelsToTry = ['gemini-flash-latest', 'gemini-2.0-flash'];
+      const modelsToTry = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'];
       let lastError = null;
 
       const cleanPayload = JSON.parse(JSON.stringify(payload));
@@ -1808,14 +1824,14 @@
       }
 
       for (const model of modelsToTry) {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${STATE.apiKey}`;
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), ms);
 
         try {
           const res = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': STATE.apiKey },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(cleanPayload),
             signal: controller.signal
           });
@@ -1925,9 +1941,10 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
     // RESOLUCIÓN MULTINIVEL DE METADATOS: GOOGLE BOOKS -> OPEN LIBRARY -> GEMINI -> FALLBACK CLÁSICO
     async function fetchBookMetadataByIsbn(isbn) {
       isbn = toIsbn13(isbn) || String(isbn).replace(/[^0-9X]/gi, '');
-      let result = await lookupIsbnMulti(isbn);
+      const notes = [];
+      let result = await lookupIsbnMulti(isbn, notes);
 
-      if ((!result || !result.title || !result.synopsis) && STATE.apiKey) result = await enrichIsbnWithGemini(isbn, result);
+      if ((!result || !result.title || !result.synopsis) && STATE.apiKey) result = await enrichIsbnWithGemini(isbn, result, notes);
       if (result && result.title && !result.cover) result.cover = `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false`;
 
       // 5. Fallback garantizado si ningún catálogo devolvió título
@@ -1938,7 +1955,7 @@ Devuelve ÚNICAMENTE un array JSON válido con hasta 4 opciones (sin formato mar
           year: '',
           pages: 0,
           cover: '',
-          synopsis: 'Ejemplar incorporado mediante lectura de código de barras. Puede editar el título y detalles tocando este libro.',
+          synopsis: 'No se pudieron obtener los datos [' + (notes.join(' · ') || 'sin detalle') + ']. Puede editar el título tocando este libro.',
           genre: 'General',
           source: 'Manual'
         };
@@ -2224,6 +2241,32 @@ Pautas para sus respuestas:
       localStorage.setItem('biblio_gemini_key', key);
       updateApiStatusUI();
       showToast("Clave guardada correctamente");
+    }
+
+    async function diagnoseIsbn() {
+      const out = document.getElementById('diag-out'), L = [];
+      const log = t => { L.push(t); out.textContent = L.join('\n'); };
+      out.classList.remove('hidden'); out.textContent = 'Probando...';
+      const raw = document.getElementById('diag-isbn').value, isbn = toIsbn13(raw);
+      if (!isbn) { log('ISBN inválido: ' + raw); return; }
+      log(`ISBN ${isbn} | clave Gemini: ${STATE.apiKey ? 'sí' : 'NO'} | online: ${navigator.onLine} | origen: ${location.origin}`);
+      const probe = async (name, url, opts) => {
+        const t0 = Date.now();
+        try { const r = await fetch(url, opts); const txt = await r.text();
+          log(`${name}: HTTP ${r.status} (${Date.now() - t0} ms) ${txt.slice(0, 150).replace(/\s+/g, ' ')}`); return txt; }
+        catch (e) { log(`${name}: ERROR ${e.name}: ${e.message} (${Date.now() - t0} ms)`); return null; }
+      };
+      const g = await probe('Google Books isbn:', `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&maxResults=3`);
+      if (g) { try { const j = JSON.parse(g); log(`  items: ${j.totalItems || 0}`);
+        (j.items || []).forEach(i => log('  · ' + (i.volumeInfo || {}).title + ' ids=' + JSON.stringify(((i.volumeInfo || {}).industryIdentifiers || []).map(x => x.identifier)))); } catch (e) {} }
+      await probe('Google Books texto', `https://www.googleapis.com/books/v1/volumes?q=${isbn}&maxResults=3`);
+      await probe('Open Library', `https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+      if (STATE.apiKey) {
+        const body = JSON.stringify({ contents: [{ role: 'user', parts: [{ text: `Buscá en Google el libro con ISBN ${isbn} y decime título y autor.` }] }], tools: [{ google_search: {} }] });
+        for (const m of ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash'])
+          await probe('Gemini ' + m, `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${STATE.apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      }
+      log('--- fin ---');
     }
 
     function updateApiStatusUI() {
